@@ -1,0 +1,15 @@
+[  {
+    "timestamp": 0.1,
+    "nodes": [
+      { "id": "ue0", "x": 510, "y": 510, "z": 0, "speed": 0, "serving_gnb": "gnb1", "sinr_dl": 13.4198, "sinr_ul": 20.9917 },
+      { "id": "ue1", "x": 399.987, "y": 404, "z": 0, "speed": 40, "serving_gnb": "gnb1", "sinr_dl": 15.2912, "sinr_ul": 17.4606 },
+      { "id": "ue2", "x": 845.361, "y": 168.335, "z": 0, "speed": 30, "serving_gnb": "gnb1", "sinr_dl": 13.2334, "sinr_ul": 14.6717 },
+      { "id": "ue3", "x": 423.66, "y": 581.746, "z": 0, "speed": 40, "serving_gnb": "gnb1", "sinr_dl": 15.1233, "sinr_ul": 27.9602 },
+      { "id": "ue4", "x": 593.124, "y": 536.44, "z": 0, "speed": 5, "serving_gnb": "gnb1", "sinr_dl": 15.6038, "sinr_ul": 17.1005 },
+      { "id": "gnb0", "x": 476.084, "y": 933.84, "z": 0, "speed": 0, "serving_gnb": "none", "sinr_dl": 999, "sinr_ul": 999 }
+    ],
+    "flows": [
+
+    ]
+  }
+]
