@@ -1,0 +1,13 @@
+{
+  "test_mape_loss": 0.498097686338901,
+  "test_mape_delay": 0.07980384729848089,
+  "test_mape_throughput": 0.9163915258268934,
+  "best_val_loss": 0.4979572552727645,
+  "config": {
+    "hidden_dim": 32,
+    "heads": 4,
+    "iterations": 4,
+    "epochs": 10,
+    "lr": 0.001
+  }
+}
