@@ -1,0 +1,1 @@
+/home/abdessamed/NDT_Data/omnet/FiveG_network/src/package.ned
