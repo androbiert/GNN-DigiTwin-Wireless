@@ -1,91 +1,75 @@
 """
-train.py — Training & Evaluation Loop for WirelessNet-Fermi
+train.py — WirelessNet-Fermi : training d'un seul modèle (Delay OU Throughput)
 
-Loss: MAPE (Mean Absolute Percentage Error) on both delay and throughput.
-      MAPE is preferred over MSE here because:
-        - delay varies over several orders of magnitude (0.004 s -> 2+ s)
-        - throughput varies widely (631 bps -> 125 kbps)
-      MAPE treats all samples equally regardless of magnitude.
+Usage:
+  python wireless_gnn/train.py --target delay      --epochs 50
+  python wireless_gnn/train.py --target throughput --epochs 50
+
+Checkpoints:
+  checkpoints/<target>/epoch_001_mape_0.1234.pt  <- traces de chaque époque
+  checkpoints/<target>/best.pt                   <- meilleur val-loss
 """
+
+import sys, os as _os
+_project_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 import os
 import time
 import copy
-from typing import Optional, Dict, Tuple
+from typing import Optional, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from tqdm import tqdm
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use("Agg")
 
 from wireless_gnn.model   import WirelessNetFermi
 from wireless_gnn.dataset import WirelessDataset, FeatureNormalizer, collate_fn
 
 
 # --------------------------------------------------------------------------- #
-# Loss Functions
+# Loss
 # --------------------------------------------------------------------------- #
 
 def mape_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
-    """Mean Absolute Percentage Error — safe against zero targets."""
     return torch.mean(torch.abs((pred - target) / (target.abs() + eps)))
 
 
-def combined_loss(
-    delay_pred:      torch.Tensor,
-    throughput_pred: torch.Tensor,
-    delay_true:      torch.Tensor,
-    throughput_true: torch.Tensor,
-    alpha: float = 0.5,
-) -> torch.Tensor:
-    """
-    Combined MAPE loss.
-    alpha: weight for delay loss (1-alpha for throughput).
-    """
-    loss_d = mape_loss(delay_pred,      delay_true)
-    loss_t = mape_loss(throughput_pred, throughput_true)
-    return alpha * loss_d + (1.0 - alpha) * loss_t, loss_d.item(), loss_t.item()
-
-
 # --------------------------------------------------------------------------- #
-# Single-graph forward pass with loss
+# Single-graph forward + loss
 # --------------------------------------------------------------------------- #
 
 def process_graph(
-    model: WirelessNetFermi,
-    graph: dict,
-    device: torch.device,
+    model:      WirelessNetFermi,
+    graph:      dict,
+    device:     torch.device,
     normalizer: FeatureNormalizer,
-) -> tuple[torch.Tensor, float, float]:
-    """
-    Run model on one graph snapshot.
-    Returns (loss, mape_delay, mape_throughput).
-    Predictions are in normalised space; targets are un-normalised for metrics.
-    """
-    delay_pred, tput_pred = model(graph)
+) -> Tuple[torch.Tensor, float]:
+    pred, _ = model(graph)
 
-    # Denormalise predictions back to physical units for computing MAPE
-    delay_mean = torch.tensor(normalizer.delay_mean, device=device)
-    delay_std  = torch.tensor(normalizer.delay_std,  device=device)
-    tput_mean  = torch.tensor(normalizer.tput_mean,  device=device)
-    tput_std   = torch.tensor(normalizer.tput_std,   device=device)
+    if model.target == 'delay':
+        mean = torch.tensor(normalizer.delay_mean, device=device)
+        std  = torch.tensor(normalizer.delay_std,  device=device)
+        true = torch.tensor(np.asarray(graph["target_delay"]),
+                            dtype=torch.float32, device=device)
+    else:
+        mean = torch.tensor(normalizer.tput_mean, device=device)
+        std  = torch.tensor(normalizer.tput_std,  device=device)
+        true = torch.tensor(np.asarray(graph["target_throughput"]),
+                            dtype=torch.float32, device=device)
 
-    delay_pred_phys = delay_pred * delay_std + delay_mean
-    tput_pred_phys  = tput_pred  * tput_std  + tput_mean
-
-    # Ground-truth targets in physical units
-    delay_true = torch.tensor(
-        np.asarray(graph["target_delay"]), dtype=torch.float32, device=device
-    )
-    tput_true = torch.tensor(
-        np.asarray(graph["target_throughput"]), dtype=torch.float32, device=device
-    )
-
-    loss, ld, lt = combined_loss(delay_pred_phys, tput_pred_phys, delay_true, tput_true)
-    return loss, ld, lt
+    pred_phys = pred * std + mean
+    loss = mape_loss(pred_phys, true)
+    return loss, loss.item()
 
 
 # --------------------------------------------------------------------------- #
-# Epoch helpers
+# Epoch runner
 # --------------------------------------------------------------------------- #
 
 def run_epoch(
@@ -94,169 +78,185 @@ def run_epoch(
     device:     torch.device,
     normalizer: FeatureNormalizer,
     optimizer:  Optional[torch.optim.Optimizer] = None,
-) -> Tuple[float, float, float]:
-    """
-    One training or evaluation epoch.
-    If optimizer is None -> eval mode.
-    Returns (avg_loss, avg_mape_delay, avg_mape_throughput).
-    """
+    desc:       str = "",
+) -> float:
     training = optimizer is not None
     model.train(training)
 
-    total_loss = total_ld = total_lt = 0.0
-    n_samples = 0
+    total = 0.0
+    n     = 0
 
     ctx = torch.enable_grad() if training else torch.no_grad()
     with ctx:
-        for batch in loader:
-            # batch is a list of graph dicts (see collate_fn)
+        pbar = tqdm(loader, desc=desc, leave=False, unit="batch", dynamic_ncols=True)
+        for batch in pbar:
             for graph in batch:
-                loss, ld, lt = process_graph(model, graph, device, normalizer)
-
+                loss, mape = process_graph(model, graph, device, normalizer)
                 if training:
                     optimizer.zero_grad()
                     loss.backward()
                     nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
                     optimizer.step()
+                total += mape
+                n     += 1
+            pbar.set_postfix(mape=f"{total/max(n,1):.4f}")
 
-                total_loss += loss.item()
-                total_ld   += ld
-                total_lt   += lt
-                n_samples  += 1
-
-    n = max(n_samples, 1)
-    return total_loss / n, total_ld / n, total_lt / n
+    return total / max(n, 1)
 
 
 # --------------------------------------------------------------------------- #
-# Main train function
+# Train one model (Delay OU Throughput)
 # --------------------------------------------------------------------------- #
 
 def train(
-    project_root: str,
-    hidden_dim:   int   = 64,
-    num_heads:    int   = 4,
-    iterations:   int   = 8,
-    epochs:       int   = 50,
-    lr:           float = 1e-3,
-    weight_decay: float = 1e-4,
-    patience:     int   = 10,
-    device_str:   str   = "auto",
-    checkpoint_dir: Optional[str] = None,
+    target:         str,               # 'delay' or 'throughput'
+    project_root:   str,
+    hidden_dim:     int   = 64,
+    num_heads:      int   = 4,
+    iterations:     int   = 8,
+    dropout:        float = 0.1,
+    epochs:         int   = 50,
+    lr:             float = 1e-3,
+    weight_decay:   float = 1e-4,
+    patience:       int   = 10,
+    device_str:     str   = "auto",
+    checkpoint_dir: str   = "checkpoints",
 ) -> dict:
     """
-    Full training pipeline.
+    Entraîne un seul modèle spécialisé (delay OU throughput).
 
-    Returns a results dict with train/val/test metrics and the trained model.
+    Checkpoints sauvegardés :
+      <checkpoint_dir>/<target>/epoch_NNN.pt   — toutes les époques (traces)
+      <checkpoint_dir>/<target>/best.pt        — meilleur val-loss
     """
     from wireless_gnn.dataset import build_datasets
 
-    # ------------------------------------------------------------------ #
-    # Device
-    # ------------------------------------------------------------------ #
+    assert target in ('delay', 'throughput'), \
+        f"--target must be 'delay' or 'throughput', got '{target}'"
+
+    label = "Delay" if target == "delay" else "Throughput"
+
+    # ── Device ────────────────────────────────────────────────────────────── #
     if device_str == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(device_str)
-    print(f"[train] Using device: {device}")
+    print(f"\n[{label}] Device : {device}")
 
-    # ------------------------------------------------------------------ #
-    # Data
-    # ------------------------------------------------------------------ #
+    # ── Data ──────────────────────────────────────────────────────────────── #
     train_ds, val_ds, test_ds, normalizer = build_datasets(project_root)
-
     train_loader = DataLoader(train_ds, batch_size=1, shuffle=True,  collate_fn=collate_fn)
     val_loader   = DataLoader(val_ds,   batch_size=1, shuffle=False, collate_fn=collate_fn)
     test_loader  = DataLoader(test_ds,  batch_size=1, shuffle=False, collate_fn=collate_fn)
 
-    # ------------------------------------------------------------------ #
-    # Model
-    # ------------------------------------------------------------------ #
+    # ── Model ─────────────────────────────────────────────────────────────── #
     model = WirelessNetFermi(
-        hidden_dim=hidden_dim,
-        num_heads=num_heads,
-        iterations=iterations,
+        hidden_dim = hidden_dim,
+        num_heads  = num_heads,
+        iterations = iterations,
+        dropout    = dropout,
+        target     = target,
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"[train] Model parameters: {n_params:,}")
+    print(f"[{label}] Paramètres : {n_params:,}")
 
-    optimizer = torch.optim.Adam(
-        model.parameters(), lr=lr, weight_decay=weight_decay
-    )
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5
     )
 
-    # ------------------------------------------------------------------ #
-    # Training Loop
-    # ------------------------------------------------------------------ #
-    best_val_loss  = float("inf")
-    best_state     = None
-    no_improve     = 0
-    history        = {"train": [], "val": []}
+    # ── Dossier checkpoints ───────────────────────────────────────────────── #
+    ckpt_dir = os.path.join(checkpoint_dir, target)
+    os.makedirs(ckpt_dir, exist_ok=True)
+    best_ckpt = os.path.join(ckpt_dir, "best.pt")
 
-    print(f"\n{'Epoch':>6}  {'Train Loss':>12}  {'Val Loss':>12}  "
-          f"{'MAPE Delay':>12}  {'MAPE Tput':>12}  {'Time(s)':>8}")
-    print("-" * 72)
+    # ── Training loop ─────────────────────────────────────────────────────── #
+    best_val   = float("inf")
+    best_state = None
+    no_improve = 0
+    history    = {"train": [], "val": []}
 
-    for epoch in range(1, epochs + 1):
+    print(f"\n[{label}] {'Epoch':>6}  {'Train MAPE':>12}  {'Val MAPE':>12}  {'Best?':>6}  {'LR':>10}  {'Time':>7}")
+    print(f"[{label}] " + "-" * 65)
+
+    epoch_bar = tqdm(range(1, epochs + 1), desc=f"[{label}]", unit="ep", dynamic_ncols=True)
+
+    for epoch in epoch_bar:
         t0 = time.time()
 
-        train_loss, _, _ = run_epoch(model, train_loader, device, normalizer, optimizer)
-        val_loss, val_ld, val_lt = run_epoch(model, val_loader, device, normalizer)
+        train_mape = run_epoch(model, train_loader, device, normalizer, optimizer,
+                               desc=f"  train ep{epoch:03d}")
+        val_mape   = run_epoch(model, val_loader,   device, normalizer,
+                               desc=f"  val   ep{epoch:03d}")
 
-        scheduler.step(val_loss)
+        scheduler.step(val_mape)
         elapsed = time.time() - t0
+        cur_lr  = optimizer.param_groups[0]["lr"]
 
-        history["train"].append(train_loss)
-        history["val"].append(val_loss)
+        history["train"].append(train_mape)
+        history["val"].append(val_mape)
 
-        print(f"{epoch:>6}  {train_loss:>12.6f}  {val_loss:>12.6f}  "
-              f"{val_ld:>12.4%}  {val_lt:>12.4%}  {elapsed:>8.1f}")
+        # ── Sauvegarde trace de chaque époque ──────────────────────────────── #
+        epoch_ckpt = os.path.join(ckpt_dir, f"epoch_{epoch:03d}_mape_{val_mape:.4f}.pt")
+        torch.save({
+            "epoch":      epoch,
+            "model":      model.state_dict(),
+            "optimizer":  optimizer.state_dict(),
+            "train_mape": train_mape,
+            "val_mape":   val_mape,
+        }, epoch_ckpt)
 
-        # Early stopping & checkpoint
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_state    = copy.deepcopy(model.state_dict())
-            no_improve    = 0
-            if checkpoint_dir:
-                os.makedirs(checkpoint_dir, exist_ok=True)
-                ckpt_path = os.path.join(checkpoint_dir, "best_model.pt")
-                torch.save(best_state, ckpt_path)
+        # ── Meilleur modèle ───────────────────────────────────────────────── #
+        is_best = val_mape < best_val
+        if is_best:
+            best_val   = val_mape
+            best_state = copy.deepcopy(model.state_dict())
+            no_improve = 0
+            torch.save(best_state, best_ckpt)
+
         else:
             no_improve += 1
-            if no_improve >= patience:
-                print(f"\n[train] Early stopping at epoch {epoch} "
-                      f"(no improvement for {patience} epochs).")
-                break
 
-    # ------------------------------------------------------------------ #
-    # Final evaluation on test set
-    # ------------------------------------------------------------------ #
+        flag = "★" if is_best else ""
+        tqdm.write(
+            f"[{label}] {epoch:>6}  {train_mape:>12.4%}  {val_mape:>12.4%}  "
+            f"{flag:>6}  {cur_lr:>10.2e}  {elapsed:>6.1f}s"
+        )
+
+        epoch_bar.set_postfix(
+            train=f"{train_mape:.4%}", val=f"{val_mape:.4%}",
+            best=f"{best_val:.4%}", s=f"{elapsed:.1f}s"
+        )
+
+        if no_improve >= patience:
+            tqdm.write(f"\n[{label}] Early stop à l'époque {epoch} (patience={patience})")
+            break
+
+    # ── Test final ────────────────────────────────────────────────────────── #
     model.load_state_dict(best_state)
-    test_loss, test_ld, test_lt = run_epoch(model, test_loader, device, normalizer)
+    test_mape = run_epoch(model, test_loader, device, normalizer, desc="  test")
 
-    print(f"\n{'='*72}")
-    print(f"[train] TEST RESULTS:")
-    print(f"  Total MAPE Loss  : {test_loss:.6f}")
-    print(f"  MAPE Delay       : {test_ld:.4%}")
-    print(f"  MAPE Throughput  : {test_lt:.4%}")
-    print(f"{'='*72}\n")
+    print(f"\n{'='*60}")
+    print(f"[{label}] RÉSULTATS TEST")
+    print(f"  MAPE {label:>12} : {test_mape:.4%}")
+    print(f"  Meilleur val-MAPE  : {best_val:.4%}")
+    print(f"  Checkpoints traces : {ckpt_dir}/epoch_NNN_mape_XXXX.pt")
+    print(f"  Meilleur checkpoint: {best_ckpt}")
+    print(f"{'='*60}\n")
 
     return {
-        "model":        model,
-        "normalizer":   normalizer,
-        "history":      history,
-        "test_loss":    test_loss,
-        "test_mape_delay": test_ld,
-        "test_mape_tput":  test_lt,
-        "best_val_loss":   best_val_loss,
+        "model":      model,
+        "normalizer": normalizer,
+        "history":    history,
+        "test_mape":  test_mape,
+        "best_val":   best_val,
+        "ckpt_dir":   ckpt_dir,
     }
 
 
 # --------------------------------------------------------------------------- #
-# Inference helper
+# Inference
 # --------------------------------------------------------------------------- #
 
 @torch.no_grad()
@@ -266,24 +266,142 @@ def predict(
     normalizer: FeatureNormalizer,
     device:     torch.device,
 ) -> dict:
-    """
-    Run inference on a single graph snapshot.
-    Returns a dict with 'delay' and 'throughput' predictions (physical units).
-    """
     model.eval()
-    delay_pred, tput_pred = model(graph)
+    pred, _ = model(graph)
 
-    delay_mean = torch.tensor(normalizer.delay_mean, device=device)
-    delay_std  = torch.tensor(normalizer.delay_std,  device=device)
-    tput_mean  = torch.tensor(normalizer.tput_mean,  device=device)
-    tput_std   = torch.tensor(normalizer.tput_std,   device=device)
-
-    delay_phys = (delay_pred * delay_std + delay_mean).cpu().numpy()
-    tput_phys  = (tput_pred  * tput_std  + tput_mean ).cpu().numpy()
+    if model.target == 'delay':
+        mean = torch.tensor(normalizer.delay_mean, device=device)
+        std  = torch.tensor(normalizer.delay_std,  device=device)
+        key_pred, key_true = "delay_pred", "delay_true"
+        true = np.asarray(graph["target_delay"])
+    else:
+        mean = torch.tensor(normalizer.tput_mean, device=device)
+        std  = torch.tensor(normalizer.tput_std,  device=device)
+        key_pred, key_true = "throughput_pred", "throughput_true"
+        true = np.asarray(graph["target_throughput"])
 
     return {
-        "delay_pred":      delay_phys,
-        "throughput_pred": tput_phys,
-        "delay_true":      np.asarray(graph["target_delay"]),
-        "throughput_true": np.asarray(graph["target_throughput"]),
+        key_pred: (pred * std + mean).cpu().numpy(),
+        key_true: true,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Plotting
+# --------------------------------------------------------------------------- #
+
+def plot_loss_curve(history: dict, target: str, save_dir: str):
+    os.makedirs(save_dir, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(history["train"], label="Train MAPE", linewidth=2, color="#4C72B0")
+    ax.plot(history["val"],   label="Val MAPE",   linewidth=2, color="#DD8452")
+    ax.set_xlabel("Epoch", fontsize=13)
+    ax.set_ylabel(f"MAPE Loss ({target.capitalize()})", fontsize=13)
+    ax.set_title(f"Training Curve - {target.capitalize()}", fontsize=14, fontweight="bold")
+    ax.legend(fontsize=12)
+    ax.grid(True, alpha=0.3)
+    ax.set_yscale("log")
+    path = os.path.join(save_dir, f"loss_curve_{target}.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[{target.capitalize()}] Loss curve saved -> {path}")
+
+def plot_scatter(results_list: list, target: str, save_dir: str, n_samples: int = 200):
+    os.makedirs(save_dir, exist_ok=True)
+    
+    key_true = f"{target}_true"
+    key_pred = f"{target}_pred"
+    
+    all_true = np.concatenate([r[key_true] for r in results_list])
+    all_pred = np.concatenate([r[key_pred] for r in results_list])
+
+    idx = np.random.choice(len(all_true), min(n_samples, len(all_true)), replace=False)
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+    
+    if target == "delay":
+        x_true = all_true[idx] * 1000
+        x_pred = all_pred[idx] * 1000
+        color = "#4C72B0"
+        xlabel = "True Delay (ms)"
+        ylabel = "Predicted Delay (ms)"
+    else:
+        x_true = all_true[idx] / 1000
+        x_pred = all_pred[idx] / 1000
+        color = "#DD8452"
+        xlabel = "True Throughput (kbps)"
+        ylabel = "Predicted Throughput (kbps)"
+
+    ax.scatter(x_true, x_pred, alpha=0.6, s=25, color=color, edgecolors="none")
+    lim = max(x_true.max(), x_pred.max()) * 1.05
+    ax.plot([0, lim], [0, lim], "r--", linewidth=1.5, label="Perfect prediction")
+    ax.set_xlabel(xlabel, fontsize=12)
+    ax.set_ylabel(ylabel, fontsize=12)
+    ax.set_title(f"Prediction Scatter - {target.capitalize()}", fontsize=13, fontweight="bold")
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+
+    path = os.path.join(save_dir, f"scatter_{target}.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[{target.capitalize()}] Scatter plot saved -> {path}")
+
+
+# --------------------------------------------------------------------------- #
+# Entry point
+# --------------------------------------------------------------------------- #
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Entraîner WirelessNet-Fermi sur Delay OU Throughput"
+    )
+    parser.add_argument(
+        "--target", required=True, choices=["delay", "throughput"],
+        help="Choisir le modèle à entraîner : 'delay' ou 'throughput'"
+    )
+    parser.add_argument("--root",           default=".",  help="Racine du projet")
+    parser.add_argument("--epochs",         type=int,   default=50)
+    parser.add_argument("--hidden-dim",     type=int,   default=64)
+    parser.add_argument("--num-heads",      type=int,   default=4)
+    parser.add_argument("--iterations",     type=int,   default=8)
+    parser.add_argument("--lr",             type=float, default=1e-3)
+    parser.add_argument("--dropout",        type=float, default=0.1)
+    parser.add_argument("--patience",       type=int,   default=10)
+    parser.add_argument("--checkpoint-dir", default="checkpoints")
+    parser.add_argument("--device",         default="auto")
+    args = parser.parse_args()
+
+    root = args.root if args.root != "." else _os.path.dirname(
+        _os.path.dirname(_os.path.abspath(__file__))
+    )
+
+    results = train(
+        target         = args.target,
+        project_root   = root,
+        hidden_dim     = args.hidden_dim,
+        num_heads      = args.num_heads,
+        iterations     = args.iterations,
+        dropout        = args.dropout,
+        epochs         = args.epochs,
+        lr             = args.lr,
+        patience       = args.patience,
+        device_str     = args.device,
+        checkpoint_dir = args.checkpoint_dir,
+    )
+
+    # ── Plots ────────────────────────────────────────────────────────── #
+    plot_dir = os.path.join(results["ckpt_dir"], "plots")
+    plot_loss_curve(results["history"], args.target, plot_dir)
+
+    from wireless_gnn.dataset import build_datasets
+    _, _, test_ds, norm = build_datasets(root)
+    
+    device = next(results["model"].parameters()).device
+    test_results = []
+    for graph in test_ds:
+        r = predict(results["model"], graph, norm, device)
+        test_results.append(r)
+        
+    plot_scatter(test_results, args.target, plot_dir)
