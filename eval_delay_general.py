@@ -14,7 +14,7 @@ def main():
     print("=" * 60)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    checkpoint_path = "wireless_gnn/checkpoints/delay/best.pt"
+    checkpoint_path = "wireless_gnn/checkpoints/delay/epoch_242_mape_0.0249.pt"
 
     if not os.path.exists(checkpoint_path):
         print(f"[!] Checkpoint introuvable : {checkpoint_path}")
@@ -48,20 +48,29 @@ def main():
 
     true_list = []
     pred_list = []
+    true_log_list = []
+    pred_log_list = []
 
     with torch.no_grad():
         for batch in tqdm(test_loader, desc="Evaluation"):
             for graph in batch:
                 res = predict(model, graph, norm, device)
-                true_vals = res["delay_true"] * 1000  # convert to ms
-                pred_vals = res["delay_pred"] * 1000  # convert to ms
+                true_vals = res["delay_true"] 
+                pred_vals = res["delay_pred"] 
                 
-                # append each flow's true and pred
-                true_list.extend(true_vals.tolist())
-                pred_list.extend(pred_vals.tolist())
+                # append each flow's true and pred (in ms)
+                true_list.extend((true_vals * 1000).tolist())
+                pred_list.extend((pred_vals * 1000).tolist())
+
+                # log-space for train loss equivalent (in seconds)
+                true_log_list.extend(np.log1p(true_vals).tolist())
+                pred_log_list.extend(np.log1p(np.clip(pred_vals, 0, None)).tolist())
 
     true_arr = np.array(true_list)
     pred_arr = np.array(pred_list)
+    
+    true_log_tensor = torch.tensor(true_log_list)
+    pred_log_tensor = torch.tensor(pred_log_list)
 
     # Compute metrics
     mae = np.mean(np.abs(true_arr - pred_arr))
@@ -72,6 +81,9 @@ def main():
     ss_res = np.sum((true_arr - pred_arr)**2)
     ss_tot = np.sum((true_arr - np.mean(true_arr))**2)
     r2 = 1 - (ss_res / (ss_tot + 1e-6))
+    
+    # Training Metric Equivalent (Log-Space Huber Loss)
+    train_metric = torch.nn.functional.huber_loss(pred_log_tensor, true_log_tensor, delta=1.0).item() * 100
 
     print("\n" + "=" * 60)
     print("RÉSULTATS DE L'ÉVALUATION GÉNÉRALE (Test Set)")
@@ -80,8 +92,11 @@ def main():
     print(f"  Nombre total de flux évalués  : {len(true_arr)}")
     print(f"  MAE (Mean Abs Error)          : {mae:.3f} ms")
     print(f"  RMSE                          : {rmse:.3f} ms")
-    print(f"  MAPE                          : {mape:.3f} %")
+    print(f"  MAPE Physique (Réel)          : {mape:.3f} %")
     print(f"  R² Score                      : {r2:.4f}")
+    print("-" * 60)
+    print(f"  Métrique d'entraînement       : {train_metric:.4f} %")
+    print("  (Log-Space Huber Loss, affichée comme MAPE pendant l'entrainement)")
     print("=" * 60)
 
 if __name__ == "__main__":
