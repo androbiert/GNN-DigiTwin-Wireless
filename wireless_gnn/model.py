@@ -34,7 +34,7 @@ from typing import Optional
 # --------------------------------------------------------------------------- #
 FLOW_FEAT_DIM  = 8   # packet_size, interval, throughput, offered_load,
                       # packet_loss, harq_error_rate, harq_tx_attempts, delivery_ratio
-QUEUE_FEAT_DIM = 3   # rlcDelay, qsize_bytes, mac_buffer_overflow
+QUEUE_FEAT_DIM = 2   # qsize_bytes, mac_buffer_overflow
 LINK_FEAT_DIM  = 4   # sinr_dl, sinr_ul, distance, speed
 
 

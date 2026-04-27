@@ -75,10 +75,9 @@ def build_graph(snapshot: dict) -> Optional[dict]:
                     5  harq_error_rate      (ratio [0,1])
                     6  harq_tx_attempts     (average HARQ rounds per TB)
                     7  delivery_ratio       (sentPacketToUpperLayer / receivedPacketFromLowerLayer)
-    queue_feat  : np.ndarray  [n_queues, 3]
-                    0  rlcDelay             (seconds, max over flows for this UE)
-                    1  qsize_bytes          (bytes)
-                    2  mac_buffer_overflow  (bool 0/1 — buffer saturation flag)
+    queue_feat  : np.ndarray  [n_queues, 2]
+                    0  qsize_bytes          (bytes)
+                    1  mac_buffer_overflow  (bool 0/1 — buffer saturation flag)
     link_feat   : np.ndarray  [n_links, 4]   (sinr_dl, sinr_ul, distance, speed)
 
     flow_to_queue  : np.ndarray [n_flows]         flow_i → queue index
@@ -192,7 +191,7 @@ def build_graph(snapshot: dict) -> Optional[dict]:
             delivery_ratio,                       # end-to-end delivery ratio
         ])
         flow_to_queue_list.append(queue_idx_map[ue_int])
-        target_delay_list.append(float(f.get("delay",      0)))
+        target_delay_list.append(float(f.get("delay", 0)) + float(f.get("rlcDelay", 0)))
         target_throughput_list.append(float(f.get("throughput", 0)))
 
     if not flow_feat_list:
@@ -211,10 +210,7 @@ def build_graph(snapshot: dict) -> Optional[dict]:
         ue_id  = ue_id_for_int[ue_int]
         ue_node = ue_info.get(ue_id, {})
 
-        # rlcDelay: take max from all flows for this UE
         ue_flows = [f for f in active_flows if _flow_ue_index(f["dst"]) == ue_int]
-        rlc_delay = max((f.get("rlcDelay", 0) for f in ue_flows), default=0.0)
-
         qsize_bytes = _parse_qsize_bytes(ue_node.get("qsize", "10MiB"))
 
         # macBufferOverflow: 1 if any flow for this UE overflowed the MAC buffer
@@ -222,7 +218,7 @@ def build_graph(snapshot: dict) -> Optional[dict]:
             any(f.get("macBufferOverflow", 0) > 0 for f in ue_flows)
         )
 
-        queue_feat_list.append([float(rlc_delay), qsize_bytes, mac_overflow])
+        queue_feat_list.append([qsize_bytes, mac_overflow])
 
         # Queue → Link
         gnb_id = ue_node.get("serving_gnb", "none")

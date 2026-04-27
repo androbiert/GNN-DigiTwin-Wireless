@@ -40,7 +40,6 @@ class FeatureNormalizer:
         self.link_mean  = self.link_std  = None
         self.delay_mean = self.delay_std = None
         self.tput_mean  = self.tput_std  = None
-        self.delay_threshold_95 = None
 
     def accumulate(self, graph: dict):
         self._flow_vals.append(graph["flow_feat"])
@@ -60,18 +59,7 @@ class FeatureNormalizer:
         self.flow_mean,  self.flow_std  = _ms(self._flow_vals)
         self.queue_mean, self.queue_std = _ms(self._queue_vals)
         self.link_mean,  self.link_std  = _ms(self._link_vals)
-        
-        # Delay: compute 95th percentile threshold and compute mean/std excluding extreme outliers
-        delay_arr = np.concatenate(self._delay_vals, axis=0)
-        self.delay_threshold_95 = float(np.percentile(delay_arr, 95))
-        filtered_delays = delay_arr[delay_arr <= self.delay_threshold_95]
-        
-        m_delay = filtered_delays.mean(axis=0)
-        s_delay = filtered_delays.std(axis=0)
-        s_delay = np.where(s_delay < eps, 1.0, s_delay)
-        self.delay_mean = m_delay.astype(np.float32)
-        self.delay_std  = s_delay.astype(np.float32)
-        
+        self.delay_mean, self.delay_std = _ms(self._delay_vals)
         self.tput_mean,  self.tput_std  = _ms(self._tput_vals)
         self.fitted = True
 
@@ -140,7 +128,26 @@ def load_all_snapshots(project_root: str) -> List[dict]:
 
         print(f"[dataset]   -> {n_valid}/{len(data)} valid snapshots")
 
-    print(f"[dataset] Total samples: {len(all_graphs)}")
+    print(f"[dataset] Total samples before filtering: {len(all_graphs)}")
+    
+    # --- Delete outlier snapshots (max delay > 95th percentile) ---
+    all_delays = []
+    for g in all_graphs:
+        all_delays.extend(g["target_delay"])
+    
+    if all_delays:
+        threshold_95 = float(np.percentile(all_delays, 95))
+        print(f"[dataset] 95th percentile delay threshold: {threshold_95:.5f}s")
+        
+        filtered_graphs = []
+        for g in all_graphs:
+            if max(g["target_delay"]) <= threshold_95:
+                filtered_graphs.append(g)
+        
+        print(f"[dataset] Filtered out {len(all_graphs) - len(filtered_graphs)} outlier snapshots.")
+        all_graphs = filtered_graphs
+    
+    print(f"[dataset] Total samples after filtering: {len(all_graphs)}")
     return all_graphs
 
 

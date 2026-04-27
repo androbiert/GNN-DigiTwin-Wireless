@@ -57,17 +57,6 @@ def process_graph(
         std  = torch.tensor(normalizer.delay_std,  device=device)
         true = torch.tensor(np.asarray(graph["target_delay"]),
                             dtype=torch.float32, device=device)
-        
-        # Mask out 95th percentile outliers
-        if hasattr(normalizer, 'delay_threshold_95') and normalizer.delay_threshold_95 is not None:
-            mask = true <= normalizer.delay_threshold_95
-            if not mask.any():
-                # If all are outliers in this graph (rare), keep the lowest to avoid NaN loss
-                mask[torch.argmin(true)] = True
-            
-            true = true[mask]
-            pred = pred[mask]
-
     else:
         mean = torch.tensor(normalizer.tput_mean, device=device)
         std  = torch.tensor(normalizer.tput_std,  device=device)
