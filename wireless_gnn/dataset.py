@@ -40,6 +40,7 @@ class FeatureNormalizer:
         self.link_mean  = self.link_std  = None
         self.delay_mean = self.delay_std = None
         self.tput_mean  = self.tput_std  = None
+        self.delay_threshold_95 = None
 
     def accumulate(self, graph: dict):
         self._flow_vals.append(graph["flow_feat"])
@@ -59,7 +60,18 @@ class FeatureNormalizer:
         self.flow_mean,  self.flow_std  = _ms(self._flow_vals)
         self.queue_mean, self.queue_std = _ms(self._queue_vals)
         self.link_mean,  self.link_std  = _ms(self._link_vals)
-        self.delay_mean, self.delay_std = _ms(self._delay_vals)
+        
+        # Delay: compute 95th percentile threshold and compute mean/std excluding extreme outliers
+        delay_arr = np.concatenate(self._delay_vals, axis=0)
+        self.delay_threshold_95 = float(np.percentile(delay_arr, 95))
+        filtered_delays = delay_arr[delay_arr <= self.delay_threshold_95]
+        
+        m_delay = filtered_delays.mean(axis=0)
+        s_delay = filtered_delays.std(axis=0)
+        s_delay = np.where(s_delay < eps, 1.0, s_delay)
+        self.delay_mean = m_delay.astype(np.float32)
+        self.delay_std  = s_delay.astype(np.float32)
+        
         self.tput_mean,  self.tput_std  = _ms(self._tput_vals)
         self.fitted = True
 
