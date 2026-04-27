@@ -2,6 +2,7 @@ import os
 import random
 import torch
 import numpy as np
+import copy
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use("Agg")
@@ -24,7 +25,7 @@ def load_model(target, checkpoint_path, device):
     ).to(device)
     
     # Charger les poids
-    state_dict = torch.load(checkpoint_path, map_location=device)
+    state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model.load_state_dict(state_dict)
     model.eval()
     return model
@@ -40,9 +41,16 @@ def main():
     delay_ckpt = "wireless_gnn/checkpoints/delay/best.pt"
     tput_ckpt  = "wireless_gnn/checkpoints/throughput/best.pt"
     
+    import wireless_gnn.model as wgnn_model
+    
     # 1. Charger les deux modèles
     model_delay = load_model("delay", delay_ckpt, device)
+    
+    # Le modèle débit (throughput) a été entraîné avec 3 features de queue au lieu de 2
+    original_dim = wgnn_model.QUEUE_FEAT_DIM
+    wgnn_model.QUEUE_FEAT_DIM = 3
     model_tput  = load_model("throughput", tput_ckpt, device)
+    wgnn_model.QUEUE_FEAT_DIM = original_dim
     
     if model_delay is None and model_tput is None:
         print("Aucun modèle n'a été trouvé. Veuillez lancer l'entraînement d'abord.")
@@ -81,8 +89,9 @@ def main():
             res_delay = predict(model_delay, graph, norm, device)
             
             # Les valeurs sont retournées en tant que tableaux (arrays) par la fonction predict
-            true_d_s = res_delay["delay_true"].item() if res_delay["delay_true"].size == 1 else res_delay["delay_true"][0]
-            pred_d_s = res_delay["delay_pred"].item() if res_delay["delay_pred"].size == 1 else res_delay["delay_pred"][0]
+            # On prend la moyenne sur tous les flux de l'échantillon pour avoir une vue globale
+            true_d_s = res_delay["delay_true"].mean()
+            pred_d_s = res_delay["delay_pred"].mean()
             
             # Conversion en millisecondes (ms)
             true_d_ms = true_d_s * 1000
@@ -99,11 +108,17 @@ def main():
             
         # --- THROUGHPUT (Débit) ---
         if model_tput is not None:
+            # Adaptation pour le modèle débit (qui attend 3 features)
+            graph_tput = copy.deepcopy(graph)
+            if graph_tput["queue_feat"].shape[1] == 2:
+                pad = np.zeros((graph_tput["queue_feat"].shape[0], 1), dtype=np.float32)
+                graph_tput["queue_feat"] = np.hstack([graph_tput["queue_feat"], pad])
+
             # Prédiction
-            res_tput = predict(model_tput, graph, norm, device)
+            res_tput = predict(model_tput, graph_tput, norm, device)
             
-            true_t_bps = res_tput["throughput_true"].item() if res_tput["throughput_true"].size == 1 else res_tput["throughput_true"][0]
-            pred_t_bps = res_tput["throughput_pred"].item() if res_tput["throughput_pred"].size == 1 else res_tput["throughput_pred"][0]
+            true_t_bps = res_tput["throughput_true"].mean()
+            pred_t_bps = res_tput["throughput_pred"].mean()
             
             # Conversion en kbps
             true_t_kbps = true_t_bps / 1000
