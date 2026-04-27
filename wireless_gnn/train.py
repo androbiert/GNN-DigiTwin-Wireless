@@ -40,6 +40,12 @@ def mape_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> to
     return torch.mean(torch.abs((pred - target) / (target.abs() + eps)))
 
 
+def log_huber_loss(pred_log: torch.Tensor, true_log: torch.Tensor,
+                   delta: float = 1.0) -> torch.Tensor:
+    """Huber loss in log-space — robust to scale differences."""
+    return nn.functional.huber_loss(pred_log, true_log, delta=delta)
+
+
 # --------------------------------------------------------------------------- #
 # Single-graph forward + loss
 # --------------------------------------------------------------------------- #
@@ -55,17 +61,30 @@ def process_graph(
     if model.target == 'delay':
         mean = torch.tensor(normalizer.delay_mean, device=device)
         std  = torch.tensor(normalizer.delay_std,  device=device)
-        true = torch.tensor(np.asarray(graph["target_delay"]),
-                            dtype=torch.float32, device=device)
+        true_raw = torch.tensor(np.asarray(graph["target_delay"]),
+                                dtype=torch.float32, device=device)
+
+        # Model predicts in log-space (normalizer stores log1p stats)
+        pred_log = pred * std + mean           # log1p(delay) scale
+        true_log = torch.log1p(true_raw)       # log1p(raw delay)
+
+        # Training loss: Huber in log-space (scale-invariant)
+        loss = log_huber_loss(pred_log, true_log)
+
+        # Reporting metric: MAPE in physical space
+        pred_phys = torch.expm1(pred_log)
+        mape_val  = mape_loss(pred_phys, true_raw).item()
+
     else:
         mean = torch.tensor(normalizer.tput_mean, device=device)
         std  = torch.tensor(normalizer.tput_std,  device=device)
-        true = torch.tensor(np.asarray(graph["target_throughput"]),
-                            dtype=torch.float32, device=device)
+        true_raw = torch.tensor(np.asarray(graph["target_throughput"]),
+                                dtype=torch.float32, device=device)
+        pred_phys = pred * std + mean
+        loss = mape_loss(pred_phys, true_raw)
+        mape_val = loss.item()
 
-    pred_phys = pred * std + mean
-    loss = mape_loss(pred_phys, true)
-    return loss, loss.item()
+    return loss, mape_val
 
 
 # --------------------------------------------------------------------------- #
@@ -305,16 +324,23 @@ def predict(
         std  = torch.tensor(normalizer.delay_std,  device=device)
         key_pred, key_true = "delay_pred", "delay_true"
         true = np.asarray(graph["target_delay"])
+
+        # Denormalize from log-space: z → log1p(delay) → delay
+        pred_log  = pred * std + mean
+        pred_phys = torch.expm1(pred_log).cpu().numpy()
+
+        return {key_pred: pred_phys, key_true: true}
+
     else:
         mean = torch.tensor(normalizer.tput_mean, device=device)
         std  = torch.tensor(normalizer.tput_std,  device=device)
         key_pred, key_true = "throughput_pred", "throughput_true"
         true = np.asarray(graph["target_throughput"])
 
-    return {
-        key_pred: (pred * std + mean).cpu().numpy(),
-        key_true: true,
-    }
+        return {
+            key_pred: (pred * std + mean).cpu().numpy(),
+            key_true: true,
+        }
 
 
 # --------------------------------------------------------------------------- #

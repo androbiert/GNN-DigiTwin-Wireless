@@ -33,19 +33,21 @@ class FeatureNormalizer:
         self._delay_vals  = []
         self._tput_vals   = []
         self.fitted = False
+        self.log_delay = True   # delay targets are log1p-transformed
 
         # Will be set after fit()
         self.flow_mean  = self.flow_std  = None
         self.queue_mean = self.queue_std = None
         self.link_mean  = self.link_std  = None
-        self.delay_mean = self.delay_std = None
+        self.delay_mean = self.delay_std = None  # mean/std of log1p(delay)
         self.tput_mean  = self.tput_std  = None
 
     def accumulate(self, graph: dict):
         self._flow_vals.append(graph["flow_feat"])
         self._queue_vals.append(graph["queue_feat"])
         self._link_vals.append(graph["link_feat"])
-        self._delay_vals.append(graph["target_delay"])
+        # Store log1p(delay) for normalization — compresses multi-order-of-magnitude range
+        self._delay_vals.append(np.log1p(graph["target_delay"].astype(np.float64)).astype(np.float32))
         self._tput_vals.append(graph["target_throughput"])
 
     def fit(self, eps: float = 1e-8):
@@ -70,7 +72,8 @@ class FeatureNormalizer:
         g["queue_feat"]        = (graph["queue_feat"]  - self.queue_mean) / self.queue_std
         g["link_feat"]         = (graph["link_feat"]   - self.link_mean)  / self.link_std
         # Targets: normalise for loss, but keep originals for metric reporting
-        g["target_delay_norm"]     = (graph["target_delay"]      - self.delay_mean) / self.delay_std
+        log_delay = np.log1p(graph["target_delay"].astype(np.float64)).astype(np.float32)
+        g["target_delay_norm"]     = (log_delay - self.delay_mean) / self.delay_std
         g["target_throughput_norm"]= (graph["target_throughput"] - self.tput_mean)  / self.tput_std
         return g
 
