@@ -2,8 +2,8 @@
 train.py — WirelessNet-Fermi : training d'un seul modèle (Delay OU Throughput)
 
 Usage:
-  python wireless_gnn/train.py --target delay      --epochs 50
-  python wireless_gnn/train.py --target throughput --epochs 50
+python wireless_gnn/train.py --target delay --epochs 100 --resume
+python wireless_gnn/train.py --target delay --epochs 100 --resume auto
 
 Checkpoints:
   checkpoints/<target>/epoch_001_mape_0.1234.pt  <- traces de chaque époque
@@ -121,6 +121,7 @@ def train(
     patience:       int   = 10,
     device_str:     str   = "auto",
     checkpoint_dir: str   = "checkpoints",
+    resume:         Optional[str] = None,
 ) -> dict:
     """
     Entraîne un seul modèle spécialisé (delay OU throughput).
@@ -176,11 +177,41 @@ def train(
     best_state = None
     no_improve = 0
     history    = {"train": [], "val": []}
+    start_epoch = 1
+
+    if str(resume).lower() in ("auto", "latest", "true"):
+        import glob
+        pattern = os.path.join(ckpt_dir, "epoch_*_mape_*.pt")
+        ckpts = glob.glob(pattern)
+        if ckpts:
+            ckpts.sort()
+            resume = ckpts[-1]
+            print(f"[{label}] Auto-detected latest checkpoint: {resume}")
+        else:
+            print(f"[{label}] No checkpoints found in {ckpt_dir} to resume from.")
+            resume = None
+
+    if resume and os.path.isfile(resume):
+        print(f"[{label}] Reprise depuis le checkpoint : {resume}")
+        checkpoint = torch.load(resume, map_location=device)
+        if "model" in checkpoint:
+            model.load_state_dict(checkpoint["model"])
+            if "optimizer" in checkpoint:
+                optimizer.load_state_dict(checkpoint["optimizer"])
+            if "epoch" in checkpoint:
+                start_epoch = checkpoint["epoch"] + 1
+            if "val_mape" in checkpoint:
+                best_val = checkpoint["val_mape"]
+        else:
+            model.load_state_dict(checkpoint)
+        best_state = copy.deepcopy(model.state_dict())
+    elif resume:
+        print(f"[{label}] Checkpoint introuvable : {resume}")
 
     print(f"\n[{label}] {'Epoch':>6}  {'Train MAPE':>12}  {'Val MAPE':>12}  {'Best?':>6}  {'LR':>10}  {'Time':>7}")
     print(f"[{label}] " + "-" * 65)
 
-    epoch_bar = tqdm(range(1, epochs + 1), desc=f"[{label}]", unit="ep", dynamic_ncols=True)
+    epoch_bar = tqdm(range(start_epoch, epochs + 1), desc=f"[{label}]", unit="ep", dynamic_ncols=True)
 
     for epoch in epoch_bar:
         t0 = time.time()
@@ -371,6 +402,7 @@ if __name__ == "__main__":
     parser.add_argument("--patience",       type=int,   default=10)
     parser.add_argument("--checkpoint-dir", default="checkpoints")
     parser.add_argument("--device",         default="auto")
+    parser.add_argument("--resume",         type=str, nargs='?', const='auto', default=None, help="Chemin du checkpoint, ou 'auto' pour le dernier")
     args = parser.parse_args()
 
     root = args.root if args.root != "." else _os.path.dirname(
@@ -389,6 +421,7 @@ if __name__ == "__main__":
         patience       = args.patience,
         device_str     = args.device,
         checkpoint_dir = args.checkpoint_dir,
+        resume         = args.resume,
     )
 
     # ── Plots ────────────────────────────────────────────────────────── #

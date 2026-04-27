@@ -133,24 +133,42 @@ def main():
             ax1 = axes[0]
             ax1.bar(x - width/2, delay_true_list, width, label='Vrai (ms)', color='#4C72B0')
             ax1.bar(x + width/2, delay_pred_list, width, label='Prédit (ms)', color='#DD8452')
+            
+            # Ajouter les pourcentages d'erreur au-dessus des barres
+            for i in range(len(labels)):
+                err = abs(delay_true_list[i] - delay_pred_list[i]) / (abs(delay_true_list[i]) + 1e-6) * 100
+                max_val = max(delay_true_list[i], delay_pred_list[i])
+                ax1.text(x[i], max_val * 1.05, f"{err:.1f}%", ha='center', va='bottom', fontsize=9, color='red', fontweight='bold')
+                
             ax1.set_ylabel('Délai (ms)')
             ax1.set_title('Comparaison du Délai sur 10 échantillons', fontweight='bold')
             ax1.set_xticks(x)
             ax1.set_xticklabels(labels)
             ax1.legend()
             ax1.grid(axis='y', alpha=0.3)
+            # Ajouter de l'espace en haut pour le texte
+            ax1.set_ylim(0, max(max(delay_true_list), max(delay_pred_list)) * 1.25)
 
         # Subplot 2: Throughput
         if tput_true_list:
             ax2 = axes[1]
             ax2.bar(x - width/2, tput_true_list, width, label='Vrai (kbps)', color='#4C72B0')
             ax2.bar(x + width/2, tput_pred_list, width, label='Prédit (kbps)', color='#DD8452')
+            
+            # Ajouter les pourcentages d'erreur au-dessus des barres
+            for i in range(len(labels)):
+                err = abs(tput_true_list[i] - tput_pred_list[i]) / (abs(tput_true_list[i]) + 1e-6) * 100
+                max_val = max(tput_true_list[i], tput_pred_list[i])
+                ax2.text(x[i], max_val * 1.05, f"{err:.1f}%", ha='center', va='bottom', fontsize=9, color='red', fontweight='bold')
+                
             ax2.set_ylabel('Débit (kbps)')
             ax2.set_title('Comparaison du Débit sur 10 échantillons', fontweight='bold')
             ax2.set_xticks(x)
             ax2.set_xticklabels(labels)
             ax2.legend()
             ax2.grid(axis='y', alpha=0.3)
+            # Ajouter de l'espace en haut pour le texte
+            ax2.set_ylim(0, max(max(tput_true_list), max(tput_pred_list)) * 1.25)
 
         plt.tight_layout()
         save_path = "eval_samples_comparison.png"
