@@ -462,7 +462,7 @@ class WirelessNetFermi(nn.Module):
         # Load tensors
         # ------------------------------------------------------------------ #
         flow_feat  = _t(graph["flow_feat"])           # [F, 8]
-        queue_feat = _t(graph["queue_feat"])          # [Q, 3]
+        queue_feat = _t(graph["queue_feat"])          # [Q, 2]
         link_feat  = _t(graph["link_feat"])           # [L, 4]
 
         f2q = _t(graph["flow_to_queue"], torch.long)  # [F]
