@@ -66,7 +66,7 @@ def main():
         return
 
     # 3. Tirer 10 échantillons aléatoires du dataset de test
-    n_samples = min(10, len(test_ds))
+    n_samples = min(20, len(test_ds))
     # On sélectionne les indices aléatoires
     indices = random.sample(range(len(test_ds)), n_samples)
     
