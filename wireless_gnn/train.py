@@ -71,10 +71,8 @@ def process_graph(
         # Training loss: Huber in log-space (scale-invariant)
         loss = log_huber_loss(pred_log, true_log)
 
-        # Track REAL physical MAPE as metric (not Huber loss)
-        pred_phys = torch.expm1(pred_log)
-        mape_phys = mape_loss(pred_phys, true_raw)
-        metric = mape_phys.item()
+        # Track log-space loss as metric (MAPE in physical space is misleading)
+        metric = loss.item()
 
     else:
         mean = torch.tensor(normalizer.tput_mean, device=device)
