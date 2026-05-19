@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>GNN Graph Viewer</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:#080c18;color:#e0e6f0;height:100vh;overflow:hidden}
+#app{display:grid;grid-template-rows:auto 1fr auto;height:100vh}
+header{background:linear-gradient(135deg,#0d1224,#1a1f3a);padding:10px 18px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(99,102,241,.2)}
+header h1{font-size:1rem;font-weight:600;background:linear-gradient(135deg,#818cf8,#6ee7b7);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+canvas{display:block}
+#wrap{position:relative;overflow:hidden;background:radial-gradient(ellipse at 50% 50%,#111827,#080c18 80%)}
+.ctrl{background:linear-gradient(135deg,#0d1224,#1a1f3a);padding:10px 18px;border-top:1px solid rgba(99,102,241,.2);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ts{font-size:.95rem;font-weight:600;color:#818cf8;min-width:130px;font-variant-numeric:tabular-nums}
+.sw{flex:1;min-width:160px}
+input[type=range]{width:100%;-webkit-appearance:none;background:rgba(99,102,241,.15);height:5px;border-radius:3px;outline:none;cursor:pointer}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:#818cf8;border:2px solid #0d1224}
+.b{padding:5px 12px;border:1px solid rgba(99,102,241,.3);background:rgba(99,102,241,.1);color:#a5b4fc;border-radius:6px;cursor:pointer;font-family:inherit;font-size:.7rem;transition:all .2s}
+.b:hover{background:rgba(99,102,241,.25)}.b.on{background:rgba(99,102,241,.35);color:#e0e7ff}
+.tip{position:absolute;display:none;background:rgba(10,16,32,.96);border:1px solid rgba(99,102,241,.4);border-radius:8px;padding:10px 14px;font-size:.68rem;pointer-events:none;backdrop-filter:blur(10px);z-index:100;min-width:155px;box-shadow:0 6px 24px rgba(0,0,0,.6)}
+.tip h3{color:#818cf8;margin-bottom:4px;font-size:.78rem}.tip .r{display:flex;justify-content:space-between;gap:8px;padding:1px 0}.tip .l{color:#64748b}.tip .v{font-weight:500}
+.leg{position:absolute;top:8px;right:8px;background:rgba(10,16,32,.88);border:1px solid rgba(99,102,241,.2);border-radius:8px;padding:8px 12px;font-size:.6rem;backdrop-filter:blur(8px)}
+.leg-i{display:flex;align-items:center;gap:5px;margin:2px 0}.leg-d{width:9px;height:9px;border-radius:50%}
+.nfo{position:absolute;top:8px;left:8px;background:rgba(10,16,32,.88);border:1px solid rgba(99,102,241,.2);border-radius:8px;padding:8px 12px;font-size:.6rem;backdrop-filter:blur(8px)}
+.nfo .r{padding:1px 0;display:flex;gap:5px}
+#lo{position:absolute;inset:0;background:rgba(8,12,24,.95);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:200}
+.sp{width:36px;height:36px;border:3px solid rgba(99,102,241,.2);border-top-color:#818cf8;border-radius:50%;animation:s .8s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+</style></head><body>
+<div id="app">
+<header><h1>⟁ GNN Tripartite Graph — Force Layout</h1>
+<div style="display:flex;gap:6px;align-items:center">
+<label class="b" for="fi">📂 Load</label><input type="file" id="fi" accept=".json" style="display:none">
+<span style="background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.3);padding:2px 8px;border-radius:12px;font-size:.65rem;color:#a5b4fc" id="fl">No file</span>
+</div></header>
+<div id="wrap"><canvas id="c"></canvas><div class="tip" id="tip"></div>
+<div class="leg">
+<div class="leg-i"><div class="leg-d" style="background:#f472b6"></div>Flow (8 feat)</div>
+<div class="leg-i"><div class="leg-d" style="background:#818cf8"></div>Queue (2 feat)</div>
+<div class="leg-i"><div class="leg-d" style="background:#34d399"></div>Link (4 feat)</div>
+<hr style="border-color:rgba(99,102,241,.1);margin:3px 0">
+<div class="leg-i" style="color:#f472b6">── F→Q demand</div>
+<div class="leg-i" style="color:#818cf8">── Q↔L radio</div>
+<div class="leg-i" style="color:#fbbf24">── Q→F feedback</div>
+<div class="leg-i" style="color:#38bdf8">── L↔L interference</div>
+</div>
+<div class="nfo" id="nfo"></div>
+<div id="lo" style="display:none"><div class="sp"></div><p style="margin-top:10px;color:#818cf8;font-size:.75rem">Loading…</p></div>
+</div>
+<div class="ctrl">
+<button class="b" id="bp">⏮</button><button class="b" id="bpl">▶ Play</button><button class="b" id="bn">⏭</button>
+<div class="sw"><input type="range" id="sl" min="0" max="0" value="0"></div>
+<div class="ts" id="td">t = 0.0 s</div>
+<div style="display:flex;gap:4px;align-items:center"><span style="font-size:.6rem;color:#64748b">Speed:</span>
+<button class="b sp on" data-s="200">1×</button><button class="b sp" data-s="100">2×</button><button class="b sp" data-s="50">4×</button></div>
+</div></div>
+<script>
+const cv=document.getElementById('c'),cx=cv.getContext('2d'),wr=document.getElementById('wrap'),
+tip=document.getElementById('tip'),sl=document.getElementById('sl'),td=document.getElementById('td'),
+nfo=document.getElementById('nfo'),lo=document.getElementById('lo');
+let DATA=[],ix=0,play=false,iv=null,spd=200,hov=null,drag=null,dpr=devicePixelRatio||1;
+let nodes=[],edges=[],W=800,H=600,animT=0;
+
+function resize(){const r=wr.getBoundingClientRect();W=r.width;H=r.height;cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';cx.setTransform(dpr,0,0,dpr,0,0)}
+
+function fUeIdx(d){return parseInt(d.match(/\d+/)[0])}
+
+function buildAndLayout(snap){
+  const nds=snap.nodes||[],fls=snap.flows||[];
+  nodes=[];edges=[];
+  if(!fls.length){nfo.innerHTML='<div class="r"><span style="color:#64748b">No flows at this timestamp</span></div>';return;}
+  const ueI={},gnbI={};
+  nds.forEach(n=>{if(n.id.startsWith('ue'))ueI[n.id]=n;else if(n.id.startsWith('gnb'))gnbI[n.id]=n});
+  const act=fls.filter(f=>(f.delay>0||f.throughput>0)&&f.dst.startsWith('ue'));
+  if(!act.length){nfo.innerHTML='<div class="r"><span style="color:#64748b">No active flows (all delay=0)</span></div>';return;}
+  const aUe=[...new Set(act.map(f=>fUeIdx(f.dst)))].sort((a,b)=>a-b);
+  const qM={};aUe.forEach((u,i)=>qM[u]=i);
+  const lK=[],lM={};
+  aUe.forEach(ui=>{const ue=ueI['ue'+ui];if(!ue)return;let g=ue.serving_gnb;if(g==='none'||!gnbI[g])g=Object.keys(gnbI)[0];if(!g)return;const k=ui+','+g;if(!(k in lM)){lM[k]=lK.length;lK.push({ue:ui,gnb:g})}});
+  if(!lK.length)return;
+  // Create nodes with initial positions in 3 zones
+  const fN=[],qN=[],lN=[];
+  act.forEach((f,i)=>{const ui=fUeIdx(f.dst);if(!(ui in qM))return;
+    fN.push({id:'F'+fN.length,type:'flow',ue:ui,x:W*0.2+Math.random()*40-20,y:60+((H-120)*fN.length/Math.max(act.length,1)),
+      vx:0,vy:0,data:f,r:11})});
+  aUe.forEach((ui,i)=>{const ue=ueI['ue'+ui]||{};
+    qN.push({id:'Q'+i,type:'queue',ue:ui,x:W*0.5+Math.random()*40-20,y:60+((H-120)*i/Math.max(aUe.length-1,1)),
+      vx:0,vy:0,qsize:ue.qsize||'10MiB',r:14})});
+  lK.forEach((lk,i)=>{const ue=ueI['ue'+lk.ue]||{},gnb=gnbI[lk.gnb]||{};
+    const dx=(ue.x||0)-(gnb.x||0),dy=(ue.y||0)-(gnb.y||0),dz=(ue.z||0)-(gnb.z||0);
+    lN.push({id:'L'+i,type:'link',ue:lk.ue,gnb:lk.gnb,x:W*0.8+Math.random()*40-20,y:60+((H-120)*i/Math.max(lK.length-1,1)),
+      vx:0,vy:0,sinrDl:ue.sinr_dl||0,sinrUl:ue.sinr_ul||0,dist:Math.sqrt(dx*dx+dy*dy+dz*dz),speed:ue.speed||0,r:11})});
+  nodes=[...fN,...qN,...lN];
+  // Build edges
+  const fOff=0,qOff=fN.length,lOff=fN.length+qN.length;
+  // F→Q
+  fN.forEach((fn,i)=>{const qi=qM[fn.ue];if(qi!==undefined)edges.push({s:fOff+i,t:qOff+qi,type:'fq'})});
+  // Q→L
+  aUe.forEach((ui,qi)=>{const ue=ueI['ue'+ui]||{};let g=ue.serving_gnb||'none';if(g==='none'||!gnbI[g])g=Object.keys(gnbI)[0];
+    const li=lM[ui+','+g];if(li!==undefined){edges.push({s:qOff+qi,t:lOff+li,type:'ql'});edges.push({s:lOff+li,t:qOff+qi,type:'lq'})}});
+  // Q→F (feedback)
+  fN.forEach((fn,i)=>{const qi=qM[fn.ue];if(qi!==undefined)edges.push({s:qOff+qi,t:fOff+i,type:'qf'})});
+  // L↔L
+  for(let i=0;i<lN.length;i++)for(let j=i+1;j<lN.length;j++)edges.push({s:lOff+i,t:lOff+j,type:'ll'});
+  // Run force simulation
+  simulate();
+  nfo.innerHTML=`<div class="r"><span style="color:#64748b">Flows:</span>${fN.length}</div><div class="r"><span style="color:#64748b">Queues:</span>${qN.length}</div><div class="r"><span style="color:#64748b">Links:</span>${lN.length}</div><div class="r"><span style="color:#64748b">Edges:</span>${edges.length}</div>`;
+}
+
+function simulate(){
+  // Force-directed: repulsion + edge springs + column attraction
+  for(let iter=0;iter<120;iter++){
+    // Repulsion (all pairs)
+    for(let i=0;i<nodes.length;i++){
+      for(let j=i+1;j<nodes.length;j++){
+        let dx=nodes[j].x-nodes[i].x,dy=nodes[j].y-nodes[i].y;
+        let d=Math.sqrt(dx*dx+dy*dy)||1;
+        let f=800/(d*d);
+        let fx=f*dx/d,fy=f*dy/d;
+        nodes[i].vx-=fx;nodes[i].vy-=fy;
+        nodes[j].vx+=fx;nodes[j].vy+=fy;
+      }
+    }
+    // Edge springs
+    edges.forEach(e=>{
+      if(e.type==='ll')return; // weak for L-L
+      const a=nodes[e.s],b=nodes[e.t];
+      let dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1;
+      let ideal=120,f=(d-ideal)*0.02;
+      let fx=f*dx/d,fy=f*dy/d;
+      a.vx+=fx;a.vy+=fy;b.vx-=fx;b.vy-=fy;
+    });
+    // Column attraction (keep types in lanes)
+    nodes.forEach(n=>{
+      let tx=n.type==='flow'?W*0.2:n.type==='queue'?W*0.5:W*0.8;
+      n.vx+=(tx-n.x)*0.05;
+    });
+    // Apply velocity with damping
+    nodes.forEach(n=>{
+      if(n===drag)return;
+      n.vx*=0.7;n.vy*=0.7;
+      n.x+=n.vx;n.y+=n.vy;
+      n.x=Math.max(30,Math.min(W-30,n.x));
+      n.y=Math.max(50,Math.min(H-30,n.y));
+    });
+  }
+}
+
+function draw(){
+  cx.clearRect(0,0,W,H);animT+=0.02;
+  if(!nodes.length){cx.fillStyle='#64748b';cx.font='500 13px Inter';cx.textAlign='center';cx.fillText('No active flows at this timestamp',W/2,H/2);requestAnimationFrame(draw);return}
+  // Column labels
+  cx.font='600 12px Inter';cx.textAlign='center';
+  cx.fillStyle='rgba(244,114,182,.5)';cx.fillText('FLOW',W*0.2,20);
+  cx.fillStyle='rgba(129,140,248,.5)';cx.fillText('QUEUE',W*0.5,20);
+  cx.fillStyle='rgba(52,211,153,.5)';cx.fillText('LINK',W*0.8,20);
+  // Faint column guides
+  [W*0.2,W*0.5,W*0.8].forEach(x=>{cx.beginPath();cx.strokeStyle='rgba(99,102,241,.04)';cx.lineWidth=1;cx.setLineDash([4,6]);cx.moveTo(x,30);cx.lineTo(x,H-10);cx.stroke();cx.setLineDash([])});
+  // Draw edges
+  const eColors={fq:'rgba(244,114,182,',ql:'rgba(129,140,248,',lq:'rgba(129,140,248,',qf:'rgba(251,191,36,',ll:'rgba(56,189,248,'};
+  edges.forEach(e=>{
+    const a=nodes[e.s],b=nodes[e.t];
+    const isLL=e.type==='ll',isRev=e.type==='lq'||e.type==='qf';
+    const alpha=isLL?'.08)':isRev?'.2)':'.35)';
+    cx.beginPath();cx.strokeStyle=eColors[e.type]+alpha;cx.lineWidth=isLL?.6:1.2;
+    if(isRev)cx.setLineDash([3,4]);
+    // Curved edge
+    const mx=(a.x+b.x)/2,my=(a.y+b.y)/2;
+    const off=isLL?30:isRev?-12:0;
+    const cpx=mx+(b.y-a.y)*0.15+off,cpy=my-(b.x-a.x)*0.15;
+    cx.moveTo(a.x,a.y);cx.quadraticCurveTo(cpx,cpy,b.x,b.y);cx.stroke();cx.setLineDash([]);
+    // Animated particle along edge
+    if(!isLL){
+      const t=((animT*0.8+(e.s*0.3))%1);
+      const px=(1-t)*(1-t)*a.x+2*(1-t)*t*cpx+t*t*b.x;
+      const py=(1-t)*(1-t)*a.y+2*(1-t)*t*cpy+t*t*b.y;
+      cx.beginPath();cx.arc(px,py,2,0,Math.PI*2);cx.fillStyle=eColors[e.type]+'0.6)';cx.fill();
+    }
+    // Arrow at 70%
+    if(!isLL){
+      const t2=0.7;const px2=(1-t2)*(1-t2)*a.x+2*(1-t2)*t2*cpx+t2*t2*b.x;
+      const py2=(1-t2)*(1-t2)*a.y+2*(1-t2)*t2*cpy+t2*t2*b.y;
+      const t3=0.71;const px3=(1-t3)*(1-t3)*a.x+2*(1-t3)*t3*cpx+t3*t3*b.x;
+      const py3=(1-t3)*(1-t3)*a.y+2*(1-t3)*t3*cpy+t3*t3*b.y;
+      const ang=Math.atan2(py3-py2,px3-px2);
+      cx.beginPath();cx.fillStyle=eColors[e.type]+'0.4)';
+      cx.moveTo(px2+5*Math.cos(ang),py2+5*Math.sin(ang));
+      cx.lineTo(px2-4*Math.cos(ang)+3*Math.sin(ang),py2-4*Math.sin(ang)-3*Math.cos(ang));
+      cx.lineTo(px2-4*Math.cos(ang)-3*Math.sin(ang),py2-4*Math.sin(ang)+3*Math.cos(ang));cx.fill();
+    }
+  });
+  // Draw nodes
+  nodes.forEach((n,i)=>{
+    const isH=hov===i;
+    const cols={flow:['#f472b6','#be185d'],queue:['#818cf8','#4f46e5'],link:['#34d399','#059669']};
+    const[c1,c2]=cols[n.type];
+    // Glow
+    const gl=cx.createRadialGradient(n.x,n.y,0,n.x,n.y,n.r*(isH?4:2.5));
+    gl.addColorStop(0,c1.slice(0,-1)+',0.'+(isH?'35':'12')+')'.replace('#',''));
+    // Use rgba
+    const hr=parseInt(c1.slice(1,3),16),hg=parseInt(c1.slice(3,5),16),hb=parseInt(c1.slice(5,7),16);
+    const gl2=cx.createRadialGradient(n.x,n.y,0,n.x,n.y,n.r*(isH?4:2.5));
+    gl2.addColorStop(0,`rgba(${hr},${hg},${hb},${isH?.35:.12})`);gl2.addColorStop(1,'transparent');
+    cx.beginPath();cx.arc(n.x,n.y,n.r*(isH?4:2.5),0,Math.PI*2);cx.fillStyle=gl2;cx.fill();
+    // Node body
+    const gd=cx.createRadialGradient(n.x-2,n.y-2,0,n.x,n.y,n.r);gd.addColorStop(0,c1);gd.addColorStop(1,c2);
+    cx.beginPath();cx.arc(n.x,n.y,n.r,0,Math.PI*2);cx.fillStyle=gd;cx.fill();
+    cx.strokeStyle=isH?'#fff':'rgba(255,255,255,.12)';cx.lineWidth=isH?2.5:1;cx.stroke();
+    // Label
+    cx.fillStyle='rgba(224,230,240,.7)';cx.font='500 8px Inter';cx.textAlign='center';
+    const lbl=n.id+(n.ue!==undefined?' (ue'+n.ue+')':'');
+    cx.fillText(lbl,n.x,n.y+n.r+11);
+  });
+  requestAnimationFrame(draw);
+}
+
+// Mouse
+let mx=0,my=0;
+cv.addEventListener('mousemove',e=>{
+  const r=cv.getBoundingClientRect();mx=e.clientX-r.left;my=e.clientY-r.top;
+  if(drag){drag.x=mx;drag.y=my;return}
+  let found=-1;
+  nodes.forEach((n,i)=>{if(Math.hypot(mx-n.x,my-n.y)<n.r+4)found=i});
+  hov=found>=0?found:null;
+  if(hov!==null){
+    cv.style.cursor='grab';const n=nodes[hov];
+    let h=`<h3>${{flow:'Flow',queue:'Queue',link:'Link'}[n.type]}: ${n.id}</h3>`;
+    if(n.type==='flow'){const f=n.data;
+      h+=`<div class="r"><span class="l">Dest</span><span class="v">${f.dst}</span></div>`;
+      h+=`<div class="r"><span class="l">Throughput</span><span class="v">${(f.throughput/1000).toFixed(1)} kbps</span></div>`;
+      h+=`<div class="r"><span class="l">Delay</span><span class="v">${((f.delay||0)*1000).toFixed(2)} ms</span></div>`;
+      h+=`<div class="r"><span class="l">RLC Delay</span><span class="v">${((f.rlcDelay||0)*1000).toFixed(2)} ms</span></div>`;
+      h+=`<div class="r"><span class="l">Pkt Size</span><span class="v">${f.packet_size} B</span></div>`;
+      h+=`<div class="r"><span class="l">HARQ Err</span><span class="v">${((f.harqErrorRate||0)*100).toFixed(1)}%</span></div>`;
+    }else if(n.type==='queue'){
+      h+=`<div class="r"><span class="l">UE</span><span class="v">ue${n.ue}</span></div>`;
+      h+=`<div class="r"><span class="l">Queue Size</span><span class="v">${n.qsize}</span></div>`;
+    }else{
+      h+=`<div class="r"><span class="l">Link</span><span class="v">ue${n.ue}→${n.gnb}</span></div>`;
+      h+=`<div class="r"><span class="l">SINR DL</span><span class="v">${n.sinrDl.toFixed(2)} dB</span></div>`;
+      h+=`<div class="r"><span class="l">SINR UL</span><span class="v">${n.sinrUl.toFixed(2)} dB</span></div>`;
+      h+=`<div class="r"><span class="l">Distance</span><span class="v">${n.dist.toFixed(1)} m</span></div>`;
+      h+=`<div class="r"><span class="l">Speed</span><span class="v">${n.speed} m/s</span></div>`;
+    }
+    tip.innerHTML=h;tip.style.display='block';tip.style.left=(mx+14)+'px';tip.style.top=(my-8)+'px';
+  }else{cv.style.cursor='default';tip.style.display='none'}
+});
+cv.addEventListener('mousedown',e=>{if(hov!==null){drag=nodes[hov];cv.style.cursor='grabbing'}});
+cv.addEventListener('mouseup',()=>{drag=null;cv.style.cursor='default'});
+cv.addEventListener('mouseleave',()=>{hov=null;drag=null;tip.style.display='none'});
+
+function goTo(i){ix=Math.max(0,Math.min(DATA.length-1,i));sl.value=ix;td.textContent=`t = ${DATA[ix].timestamp.toFixed(1)} s`;buildAndLayout(DATA[ix])}
+document.getElementById('bp').onclick=()=>goTo(ix-1);
+document.getElementById('bn').onclick=()=>goTo(ix+1);
+sl.oninput=()=>goTo(+sl.value);
+document.getElementById('bpl').addEventListener('click',function(){play=!play;this.textContent=play?'⏸ Pause':'▶ Play';this.classList.toggle('on',play);
+  if(play)iv=setInterval(()=>{ix>=DATA.length-1?ix=0:ix++;goTo(ix)},spd);else clearInterval(iv)});
+document.querySelectorAll('.sp').forEach(b=>b.addEventListener('click',function(){document.querySelectorAll('.sp').forEach(x=>x.classList.remove('on'));this.classList.add('on');spd=+this.dataset.s;if(play){clearInterval(iv);iv=setInterval(()=>{ix>=DATA.length-1?ix=0:ix++;goTo(ix)},spd)}}));
+document.addEventListener('keydown',e=>{if(e.key==='ArrowRight')goTo(ix+1);if(e.key==='ArrowLeft')goTo(ix-1);if(e.key===' '){e.preventDefault();document.getElementById('bpl').click()}});
+document.getElementById('fi').addEventListener('change',function(e){const f=e.target.files[0];if(!f)return;lo.style.display='flex';document.getElementById('fl').textContent=f.name;const r=new FileReader();r.onload=ev=>{try{DATA=JSON.parse(ev.target.result);sl.max=DATA.length-1;goTo(0);lo.style.display='none'}catch(er){alert(er);lo.style.display='none'}};r.readAsText(f)});
+window.addEventListener('DOMContentLoaded',()=>{resize();lo.style.display='flex';
+  fetch('03)SC01-P=0.01,S=PF,Q=10MiB/data.json').then(r=>{if(!r.ok)throw 0;return r.json()}).then(d=>{DATA=d;sl.max=DATA.length-1;document.getElementById('fl').textContent='data.json (auto)';
+  // Skip to first timestamp with active flows
+  let startIdx=0;for(let i=0;i<DATA.length;i++){const fls=DATA[i].flows||[];if(fls.some(f=>f.delay>0||f.throughput>0)){startIdx=i;break;}}
+  goTo(startIdx);lo.style.display='none';draw()}).catch(()=>{lo.style.display='none';draw()})});
+window.addEventListener('resize',resize);
+</script></body></html>

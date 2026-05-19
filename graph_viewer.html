@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wireless Network Graph Viewer</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:#0a0e1a;color:#e0e6f0;overflow:hidden;height:100vh}
+#app{display:grid;grid-template-rows:auto 1fr auto;height:100vh}
+header{background:linear-gradient(135deg,#0d1224 0%,#1a1f3a 100%);padding:14px 24px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(99,102,241,.2);z-index:10}
+header h1{font-size:1.2rem;font-weight:600;background:linear-gradient(135deg,#818cf8,#6ee7b7);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.badge{background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.3);padding:4px 12px;border-radius:20px;font-size:.75rem;color:#a5b4fc}
+#canvas-wrap{position:relative;overflow:hidden;background:radial-gradient(ellipse at center,#111827 0%,#0a0e1a 70%)}
+canvas{display:block;width:100%;height:100%}
+.controls{background:linear-gradient(135deg,#0d1224,#1a1f3a);padding:14px 24px;border-top:1px solid rgba(99,102,241,.2);display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.ts-display{font-size:1.1rem;font-weight:600;color:#818cf8;min-width:160px;font-variant-numeric:tabular-nums}
+.slider-wrap{flex:1;min-width:200px}
+input[type=range]{width:100%;-webkit-appearance:none;background:rgba(99,102,241,.15);height:6px;border-radius:3px;outline:none;cursor:pointer}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:linear-gradient(135deg,#818cf8,#6366f1);border:2px solid #0d1224;cursor:grab}
+.btn{padding:8px 18px;border:1px solid rgba(99,102,241,.3);background:rgba(99,102,241,.1);color:#a5b4fc;border-radius:8px;cursor:pointer;font-family:inherit;font-size:.8rem;transition:all .2s}
+.btn:hover{background:rgba(99,102,241,.25);border-color:#818cf8}
+.btn.active{background:rgba(99,102,241,.35);color:#e0e7ff;box-shadow:0 0 12px rgba(99,102,241,.3)}
+.speed-group{display:flex;gap:6px;align-items:center}
+.speed-group span{font-size:.7rem;color:#64748b}
+.tooltip{position:absolute;display:none;background:rgba(15,20,40,.95);border:1px solid rgba(99,102,241,.4);border-radius:10px;padding:12px 16px;font-size:.75rem;pointer-events:none;backdrop-filter:blur(8px);z-index:100;min-width:180px;box-shadow:0 8px 32px rgba(0,0,0,.5)}
+.tooltip h3{color:#818cf8;margin-bottom:6px;font-size:.85rem}
+.tooltip .row{display:flex;justify-content:space-between;padding:2px 0;gap:12px}
+.tooltip .label{color:#64748b}
+.tooltip .val{color:#e0e6f0;font-weight:500}
+.legend{position:absolute;top:12px;right:12px;background:rgba(15,20,40,.85);border:1px solid rgba(99,102,241,.2);border-radius:10px;padding:12px 16px;font-size:.7rem;backdrop-filter:blur(8px)}
+.legend-item{display:flex;align-items:center;gap:8px;margin:4px 0}
+.legend-dot{width:10px;height:10px;border-radius:50%}
+.stats{position:absolute;top:12px;left:12px;background:rgba(15,20,40,.85);border:1px solid rgba(99,102,241,.2);border-radius:10px;padding:12px 16px;font-size:.7rem;backdrop-filter:blur(8px)}
+.stats .row{padding:2px 0;display:flex;gap:8px}
+.file-input-wrap{display:flex;align-items:center;gap:10px}
+.file-input-wrap label{cursor:pointer}
+#loadingOverlay{position:absolute;inset:0;background:rgba(10,14,26,.95);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:200}
+#loadingOverlay .spinner{width:48px;height:48px;border:3px solid rgba(99,102,241,.2);border-top-color:#818cf8;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#loadingOverlay p{margin-top:16px;color:#818cf8;font-size:.9rem}
+</style>
+</head>
+<body>
+<div id="app">
+<header>
+  <h1>⟁ Wireless Network Graph Viewer</h1>
+  <div class="file-input-wrap">
+    <label class="btn" for="fileInput">📂 Load data.json</label>
+    <input type="file" id="fileInput" accept=".json" style="display:none">
+    <span class="badge" id="fileLabel">No file loaded</span>
+  </div>
+</header>
+<div id="canvas-wrap">
+  <canvas id="c"></canvas>
+  <div class="tooltip" id="tooltip"></div>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#6366f1"></div> gNB (Base Station)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#34d399"></div> UE (User Equipment)</div>
+    <div class="legend-item"><div class="legend-dot" style="border:2px solid #fbbf24;background:transparent"></div> Serving Link</div>
+    <div class="legend-item"><div class="legend-dot" style="border:2px solid #f87171;background:transparent"></div> DL Flow</div>
+  </div>
+  <div class="stats" id="stats"></div>
+  <div id="loadingOverlay" style="display:none"><div class="spinner"></div><p>Loading data…</p></div>
+</div>
+<div class="controls">
+  <button class="btn" id="btnPrev">⏮</button>
+  <button class="btn" id="btnPlay">▶ Play</button>
+  <button class="btn" id="btnNext">⏭</button>
+  <div class="slider-wrap"><input type="range" id="slider" min="0" max="0" value="0"></div>
+  <div class="ts-display" id="tsDisp">t = 0.0 s</div>
+  <div class="speed-group">
+    <span>Speed:</span>
+    <button class="btn speed active" data-sp="200">1×</button>
+    <button class="btn speed" data-sp="100">2×</button>
+    <button class="btn speed" data-sp="50">4×</button>
+    <button class="btn speed" data-sp="16">12×</button>
+  </div>
+</div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('canvas-wrap');
+const tooltip = document.getElementById('tooltip');
+const slider = document.getElementById('slider');
+const tsDisp = document.getElementById('tsDisp');
+const statsEl = document.getElementById('stats');
+const loadingOverlay = document.getElementById('loadingOverlay');
+
+let data = [], idx = 0, playing = false, interval = null, speed = 200;
+let hoveredNode = null, dpr = window.devicePixelRatio || 1;
+
+// IMPROVEMENT 1: Dynamic Bounds
+let bounds = { minX: 0, maxX: 100, minY: 0, maxY: 100 };
+
+function updateBounds() {
+    if (!data.length) return;
+    let xs = [], ys = [];
+    data.forEach(snap => snap.nodes.forEach(n => {
+        xs.push(n.x); ys.push(n.y);
+    }));
+    bounds.minX = Math.min(...xs);
+    bounds.maxX = Math.max(...xs);
+    bounds.minY = Math.min(...ys);
+    bounds.maxY = Math.max(...ys);
+    
+    // Add 10% padding so nodes aren't on the very edge
+    const dx = (bounds.maxX - bounds.minX) * 0.1 || 10;
+    const dy = (bounds.maxY - bounds.minY) * 0.1 || 10;
+    bounds.minX -= dx; bounds.maxX += dx;
+    bounds.minY -= dy; bounds.maxY += dy;
+}
+
+function resize() {
+    const r = wrap.getBoundingClientRect();
+    canvas.width = r.width * dpr;
+    canvas.height = r.height * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+}
+
+// IMPROVEMENT 2: Relative Mapping
+function mapX(x) {
+    const w = wrap.getBoundingClientRect().width;
+    return ((x - bounds.minX) / (bounds.maxX - bounds.minX)) * w;
+}
+function mapY(y) {
+    const h = wrap.getBoundingClientRect().height;
+    return ((y - bounds.minY) / (bounds.maxY - bounds.minY)) * h;
+}
+
+function sinrColor(sinr) {
+    if (sinr >= 18) return '#34d399';
+    if (sinr >= 12) return '#fbbf24';
+    return '#f87171';
+}
+
+// IMPROVEMENT 3: Flexible ID matching
+function cleanId(id) {
+    return String(id).replace(/[\[\]]/g, '');
+}
+
+function draw() {
+    if (!data.length) return;
+    const w = wrap.getBoundingClientRect().width;
+    const h = wrap.getBoundingClientRect().height;
+    ctx.clearRect(0, 0, w, h);
+
+    const snap = data[idx];
+    const nodeMap = {};
+    snap.nodes.forEach(n => { nodeMap[cleanId(n.id)] = n; });
+
+    // 1. Draw Links
+    snap.nodes.forEach(n => {
+        const sid = cleanId(n.serving_gnb);
+        if (n.id.includes('ue') && sid && sid !== 'none' && nodeMap[sid]) {
+            const gnb = nodeMap[sid];
+            ctx.beginPath();
+            ctx.strokeStyle = 'rgba(251,191,36,0.2)';
+            ctx.setLineDash([5, 5]);
+            ctx.moveTo(mapX(n.x), mapY(n.y));
+            ctx.lineTo(mapX(gnb.x), mapY(gnb.y));
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+    });
+
+    // 2. Draw Flows
+    if (snap.flows) {
+        snap.flows.forEach(f => {
+            const dstId = cleanId(f.dst);
+            const dst = nodeMap[dstId];
+            const src = nodeMap['gnb0'] || nodeMap[cleanId(snap.nodes[0].id)]; // Fallback
+            if (!dst || !src) return;
+
+            const hasTraffic = f.throughput > 0;
+            ctx.beginPath();
+            ctx.strokeStyle = hasTraffic ? 'rgba(248,113,113,0.6)' : 'rgba(255,255,255,0.05)';
+            ctx.lineWidth = hasTraffic ? 2 : 1;
+            ctx.moveTo(mapX(src.x), mapY(src.y));
+            ctx.lineTo(mapX(dst.x), mapY(dst.y));
+            ctx.stroke();
+        });
+    }
+
+    // 3. Draw Nodes
+    snap.nodes.forEach(n => {
+        const x = mapX(n.x), y = mapY(n.y);
+        const isGnb = n.id.toLowerCase().includes('gnb');
+        const r = isGnb ? 12 : 6;
+        
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI*2);
+        ctx.fillStyle = isGnb ? '#818cf8' : sinrColor(n.sinr_dl || 0);
+        ctx.fill();
+        if (hoveredNode === n.id) {
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+        }
+        ctx.fillStyle = '#fff';
+        ctx.font = '10px Inter';
+        ctx.fillText(n.id, x - 10, y - (r + 5));
+    });
+
+    statsEl.innerHTML = `Time: ${snap.timestamp.toFixed(2)}s | Nodes: ${snap.nodes.length}`;
+}
+
+// Interactivity
+canvas.addEventListener('mousemove', e => {
+    if (!data.length) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    let found = null;
+    data[idx].nodes.forEach(n => {
+        if (Math.hypot(mx - mapX(n.x), my - mapY(n.y)) < 15) found = n;
+    });
+    
+    if (found) {
+        hoveredNode = found.id;
+        tooltip.style.display = 'block';
+        tooltip.style.left = (e.clientX + 15) + 'px';
+        tooltip.style.top = (e.clientY + 15) + 'px';
+        tooltip.innerHTML = `<strong>${found.id}</strong><br>SINR: ${found.sinr_dl?.toFixed(1)} dB<br>Pos: ${found.x}, ${found.y}`;
+    } else {
+        hoveredNode = null;
+        tooltip.style.display = 'none';
+    }
+    draw();
+});
+
+// Controls
+function goTo(i) {
+    idx = Math.max(0, Math.min(data.length - 1, i));
+    slider.value = idx;
+    tsDisp.textContent = `t = ${data[idx].timestamp.toFixed(1)} s`;
+    draw();
+}
+
+document.getElementById('btnPlay').onclick = () => {
+    playing = !playing;
+    document.getElementById('btnPlay').textContent = playing ? '⏸ Pause' : '▶ Play';
+    if (playing) interval = setInterval(() => { idx = (idx + 1) % data.length; goTo(idx); }, speed);
+    else clearInterval(interval);
+};
+
+document.getElementById('fileInput').onchange = (e) => {
+    const file = e.target.files[0];
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+        data = JSON.parse(ev.target.result);
+        updateBounds();
+        slider.max = data.length - 1;
+        goTo(0);
+    };
+    reader.readAsText(file);
+};
+
+window.addEventListener('resize', resize);
+resize();
+</script>
+</body>
+</html>
