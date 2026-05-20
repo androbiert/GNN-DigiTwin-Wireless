@@ -10,8 +10,17 @@ venv/
 .env/
 env/
 
-# Data files (large)
-!checkpoints/summary.json
+# Data (too large for GitHub — transfer to server via SCP)
+Data/
+
+# Checkpoints & logs
+checkpoints/
+*.log
+output.log
+wireless_gnn/output.log
+
+# Large generated files
+network_state.json
 
 # Jupyter
 .ipynb_checkpoints/

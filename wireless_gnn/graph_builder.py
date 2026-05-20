@@ -176,6 +176,7 @@ def build_graph(snapshot: dict) -> Optional[dict]:
         offered_load = (pkt_size * 8.0 / interval) if interval > 0 else 0.0
 
         # Delivery ratio: packets delivered to app / packets received from MAC
+        # (may be absent in SC06–SC08 — defaults to 0)
         rx_from_lower = float(f.get("receivedPacketFromLowerLayer", 0))
         tx_to_upper   = float(f.get("sentPacketToUpperLayer",       0))
         delivery_ratio = (tx_to_upper / rx_from_lower) if rx_from_lower > 0 else 0.0
@@ -185,10 +186,10 @@ def build_graph(snapshot: dict) -> Optional[dict]:
             interval,
             tput,
             offered_load,
-            float(f.get("packet_loss",    0)),   # radio link loss ratio
-            float(f.get("harqErrorRate",  0)),   # PHY HARQ error rate
-            float(f.get("harqTxAttempts", 0)),   # avg HARQ rounds consumed
-            delivery_ratio,                       # end-to-end delivery ratio
+            float(f.get("packet_loss",    0)),   # radio link loss ratio  (0 if absent)
+            float(f.get("harqErrorRate",  0)),   # PHY HARQ error rate    (0 if absent)
+            float(f.get("harqTxAttempts", 0)),   # avg HARQ rounds        (0 if absent)
+            delivery_ratio,                       # end-to-end delivery    (0 if absent)
         ])
         flow_to_queue_list.append(queue_idx_map[ue_int])
         target_delay_list.append(float(f.get("delay", 0)) + float(f.get("rlcDelay", 0)))

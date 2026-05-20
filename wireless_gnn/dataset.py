@@ -1,13 +1,13 @@
 """
-dataset.py — WirelessNet-Fermi Dataset
+dataset.py — WirelessNet-Fermi Dataset (Scenario-Aware)
 
-Loads all active data.json files from the three scenario folders,
-builds per-timestamp graph snapshots, and normalises features.
+Supports two modes:
+  1. Legacy: loads from hardcoded SCENARIO_DIRS (backward compatible)
+  2. Scenario-aware: loads from a list of SimConfig objects from scenario_registry
 
 Folder names (relative to project root):
-  01)SC-01-P=0.01,Sch=PF,Qs=100KiB   -> 100 KiB queues
-  02)SC01-P=0.01,S=PF,Q=2MiB         -> 2 MiB queues
-  03)SC01-P=0.01,S=PF,Q=10MiB        -> 10 MiB queues
+  Data/SC01/simulations/01)SC01-P=0.01W-S=PF-Q=50KiB/data.json
+  Data/SC02/simulations/...
 """
 
 import json
@@ -79,10 +79,10 @@ class FeatureNormalizer:
 
 
 # --------------------------------------------------------------------------- #
-# File loading
+# Legacy file loading (backward compatible)
 # --------------------------------------------------------------------------- #
 
-# Folder names that contain a data.json
+# Folder names that contain a data.json (legacy — kept for backward compat)
 SCENARIO_DIRS = [
     "01)SC-01-P=0.01,Sch=PF,Qs=100KiB",
     "02)SC01-P=0.01,S=PF,Q=2MiB",
@@ -91,7 +91,7 @@ SCENARIO_DIRS = [
 
 
 def _find_data_files(project_root: str) -> List[str]:
-    """Return absolute paths to all data.json files that exist."""
+    """Return absolute paths to all data.json files that exist (legacy mode)."""
     found = []
     for sdir in SCENARIO_DIRS:
         path = os.path.join(project_root, sdir, "data.json")
@@ -106,6 +106,8 @@ def load_all_snapshots(project_root: str) -> List[dict]:
     """
     Load every valid graph snapshot from all three scenario data.json files.
     Returns a list of raw graph dicts (not yet normalised).
+    
+    LEGACY MODE — for backward compatibility with train.py.
     """
     files = _find_data_files(project_root)
     if not files:
@@ -155,6 +157,102 @@ def load_all_snapshots(project_root: str) -> List[dict]:
 
 
 # --------------------------------------------------------------------------- #
+# Scenario-aware file loading  (NEW)
+# --------------------------------------------------------------------------- #
+
+def load_scenario_snapshots(
+    data_paths: List[str],
+    scenario_id: str = "",
+    target: str = "delay",
+    filter_outliers: bool = True,
+    outlier_percentile: float = 95.0,
+    verbose: bool = True,
+) -> List[dict]:
+    """
+    Load all valid graph snapshots from a list of data.json paths.
+
+    Parameters
+    ----------
+    data_paths : List[str]
+        Absolute paths to data.json files.
+    scenario_id : str
+        Scenario identifier (e.g. "SC01") — stored as metadata on each graph.
+    target : str
+        "delay" or "throughput" — used for outlier filtering.
+    filter_outliers : bool
+        If True, remove snapshots with extreme target values.
+    outlier_percentile : float
+        Percentile threshold for outlier filtering.
+    verbose : bool
+        Print loading progress.
+
+    Returns
+    -------
+    List[dict]
+        List of raw graph dicts (not yet normalised).
+    """
+    all_graphs = []
+
+    for fpath in data_paths:
+        folder_name = os.path.basename(os.path.dirname(fpath))
+        if verbose:
+            print(f"[dataset] Loading {folder_name} ...")
+
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"[dataset] WARNING: cannot read {fpath}: {e}")
+            continue
+
+        n_valid = 0
+        for snapshot in data:
+            g = build_graph(snapshot)
+            if g is not None:
+                g["scenario"] = scenario_id
+                g["config_folder"] = folder_name
+                all_graphs.append(g)
+                n_valid += 1
+
+        if verbose:
+            print(f"[dataset]   -> {n_valid}/{len(data)} valid snapshots")
+
+    if verbose:
+        print(f"[dataset] Total samples before filtering: {len(all_graphs)}")
+
+    # --- Outlier filtering ---
+    if filter_outliers and all_graphs:
+        if target == "delay":
+            all_targets = []
+            for g in all_graphs:
+                all_targets.extend(g["target_delay"])
+        else:
+            all_targets = []
+            for g in all_graphs:
+                all_targets.extend(g["target_throughput"])
+
+        if all_targets:
+            threshold = float(np.percentile(all_targets, outlier_percentile))
+            if verbose:
+                print(f"[dataset] {outlier_percentile}th percentile threshold: {threshold:.5f}")
+
+            before = len(all_graphs)
+            if target == "delay":
+                all_graphs = [g for g in all_graphs if max(g["target_delay"]) <= threshold]
+            else:
+                # For throughput, remove extreme high values
+                all_graphs = [g for g in all_graphs if max(g["target_throughput"]) <= threshold]
+
+            if verbose:
+                print(f"[dataset] Filtered out {before - len(all_graphs)} outlier snapshots.")
+
+    if verbose:
+        print(f"[dataset] Total samples after filtering: {len(all_graphs)}")
+
+    return all_graphs
+
+
+# --------------------------------------------------------------------------- #
 # PyTorch Dataset
 # --------------------------------------------------------------------------- #
 
@@ -178,6 +276,10 @@ class WirelessDataset(Dataset):
         return g
 
 
+# --------------------------------------------------------------------------- #
+# Build datasets — Legacy (backward compatible)
+# --------------------------------------------------------------------------- #
+
 def build_datasets(
     project_root: str,
     train_ratio: float = 0.7,
@@ -186,6 +288,7 @@ def build_datasets(
 ) -> Tuple["WirelessDataset", "WirelessDataset", "WirelessDataset", FeatureNormalizer]:
     """
     Load all snapshots, split into train/val/test, fit normaliser on training set.
+    LEGACY MODE — backward compatible with original train.py.
 
     Returns (train_dataset, val_dataset, test_dataset, normalizer).
     """
@@ -212,6 +315,85 @@ def build_datasets(
     norm.fit()
 
     print(f"[dataset] Split -> train={len(train_graphs)}, "
+          f"val={len(val_graphs)}, test={len(test_graphs)}")
+
+    return (
+        WirelessDataset(train_graphs, norm),
+        WirelessDataset(val_graphs,   norm),
+        WirelessDataset(test_graphs,  norm),
+        norm,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Build datasets — Scenario-aware  (NEW)
+# --------------------------------------------------------------------------- #
+
+def build_scenario_datasets(
+    data_paths:   List[str],
+    scenario_id:  str   = "",
+    target:       str   = "delay",
+    train_ratio:  float = 0.7,
+    val_ratio:    float = 0.15,
+    seed:         int   = 42,
+    filter_outliers:    bool  = True,
+    outlier_percentile: float = 95.0,
+) -> Tuple["WirelessDataset", "WirelessDataset", "WirelessDataset", FeatureNormalizer]:
+    """
+    Load snapshots from given data_paths, split, normalise.
+
+    Parameters
+    ----------
+    data_paths : List[str]
+        Absolute paths to data.json files for this scenario.
+    scenario_id : str
+        Scenario name (e.g. "SC01").
+    target : str
+        "delay" or "throughput" — affects outlier filtering.
+    train_ratio, val_ratio : float
+        Split ratios.
+    seed : int
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    (train_dataset, val_dataset, test_dataset, normalizer)
+    """
+    all_graphs = load_scenario_snapshots(
+        data_paths=data_paths,
+        scenario_id=scenario_id,
+        target=target,
+        filter_outliers=filter_outliers,
+        outlier_percentile=outlier_percentile,
+    )
+
+    if not all_graphs:
+        raise ValueError(
+            f"No valid graphs loaded for {scenario_id} (target={target}). "
+            f"Checked {len(data_paths)} data.json files."
+        )
+
+    rng = np.random.default_rng(seed)
+    idx = rng.permutation(len(all_graphs))
+
+    n_train = int(len(all_graphs) * train_ratio)
+    n_val   = int(len(all_graphs) * val_ratio)
+
+    train_idx = idx[:n_train]
+    val_idx   = idx[n_train:n_train + n_val]
+    test_idx  = idx[n_train + n_val:]
+
+    train_graphs = [all_graphs[i] for i in train_idx]
+    val_graphs   = [all_graphs[i] for i in val_idx]
+    test_graphs  = [all_graphs[i] for i in test_idx]
+
+    # Fit normaliser ONLY on training data
+    norm = FeatureNormalizer()
+    for g in train_graphs:
+        norm.accumulate(g)
+    norm.fit()
+
+    print(f"[dataset] {scenario_id} split -> train={len(train_graphs)}, "
           f"val={len(val_graphs)}, test={len(test_graphs)}")
 
     return (
