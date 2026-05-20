@@ -297,7 +297,7 @@ def print_summary(configs: List[SimConfig]):
             print(f"    Traffic:      {ttypes}")
 
     # Summary of what can be trained
-    print(f"\n{'─'*80}")
+    print(f"\n{'-'*80}")
     print(f"  TRAINABLE COMBINATIONS:")
     for sc_id, cfgs in groups.items():
         delay_ok = any(c.has_delay and c.n_with_flows > 0 for c in cfgs)
@@ -306,9 +306,9 @@ def print_summary(configs: List[SimConfig]):
         if delay_ok:  targets.append("delay")
         if tput_ok:   targets.append("throughput")
         if targets:
-            print(f"    {sc_id} → {', '.join(targets)}")
+            print(f"    {sc_id} -> {', '.join(targets)}")
         else:
-            print(f"    {sc_id} → ❌ no trainable data")
+            print(f"    {sc_id} -> [no trainable data]")
     print(f"{'='*80}\n")
 
 
