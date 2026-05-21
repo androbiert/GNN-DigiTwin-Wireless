@@ -472,6 +472,19 @@ class WirelessNetFermi(nn.Module):
         n_f = flow_feat.size(0)
         n_q = queue_feat.size(0)
 
+        if n_f == 0:
+            pred = torch.zeros(0, device=device)
+            flow_state = torch.zeros(0, self.hidden_dim, device=device)
+            return pred, flow_state
+
+        # Validate indices — prevents silent scatter_add_ crashes
+        if f2q.numel() > 0:
+            assert f2q.max() < n_q, \
+                f"flow_to_queue has index {f2q.max().item()} but n_q={n_q}"
+        if l2q.numel() > 0:
+            assert l2q.max() < n_q, \
+                f"link_to_queue has index {l2q.max().item()} but n_q={n_q}"
+
         # ------------------------------------------------------------------ #
         # Initial embeddings
         # ------------------------------------------------------------------ #

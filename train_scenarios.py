@@ -80,14 +80,11 @@ def huber_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return torch.nn.functional.smooth_l1_loss(pred, target, beta=1.0)
 
 
-def smape_metric(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> float:
-    """SMAPE in physical space — for human-readable evaluation only (no grad)."""
+def mape_metric(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-4) -> float:
+    """MAPE — more stable than SMAPE for near-zero targets."""
     with torch.no_grad():
-        denom = (pred.abs() + target.abs()) / 2.0
-        mask = denom > eps
-        if mask.sum() == 0:
-            return 0.0
-        return torch.mean(torch.abs(pred[mask] - target[mask]) / denom[mask]).item()
+        denom = target.abs().clamp(min=eps)
+        return torch.mean(torch.abs(pred - target) / denom).item()
 
 def mae_metric(pred: torch.Tensor, target: torch.Tensor) -> float:
     """MAE in physical space (e.g. absolute seconds or bps) — no grad."""
@@ -104,7 +101,7 @@ def process_graph(
     graph:      dict,
     device:     torch.device,
     normalizer: FeatureNormalizer,
-) -> Tuple[torch.Tensor, float]:
+) -> Tuple[torch.Tensor, float, float]:
     pred, _ = model(graph)
 
     # Force FP32 for denormalization
@@ -113,16 +110,11 @@ def process_graph(
     if model.target == 'delay':
         mean = torch.tensor(normalizer.delay_mean, device=device, dtype=torch.float32)
         std  = torch.tensor(normalizer.delay_std,  device=device, dtype=torch.float32)
-        # Target in normalized space (z-scored log1p) — for training loss
         true_norm = torch.tensor(np.asarray(graph["target_delay_norm"]),
                                  dtype=torch.float32, device=device)
-        # Target in physical space — for SMAPE reporting
         true_phys = torch.tensor(np.asarray(graph["target_delay"]),
                                  dtype=torch.float32, device=device)
-        
-        # Prevent explosive expm1 values during early epochs by capping log exponent
-        log_pred = torch.clamp(pred * std + mean, max=5.0)
-        # Delay cannot be negative, clamp to 0 to prevent artificial SMAPE inflation
+        log_pred  = torch.clamp(pred * std + mean, max=5.0)
         pred_phys = torch.clamp(torch.expm1(log_pred), min=0.0)
     else:
         mean = torch.tensor(normalizer.tput_mean, device=device, dtype=torch.float32)
@@ -131,15 +123,12 @@ def process_graph(
                                  dtype=torch.float32, device=device)
         true_phys = torch.tensor(np.asarray(graph["target_throughput"]),
                                  dtype=torch.float32, device=device)
-        # Throughput cannot be negative
         pred_phys = torch.clamp(pred * std + mean, min=0.0)
 
-    # Training loss: Huber (Smooth L1) in normalized space for stable, outlier-resistant gradients
-    loss = huber_loss(pred, true_norm)
-    # Evaluation metrics: SMAPE and MAE in physical space (human-readable)
-    smape = smape_metric(pred_phys, true_phys)
-    mae  = mae_metric(pred_phys, true_phys)
-    return loss, smape, mae
+    loss  = huber_loss(pred, true_norm)
+    mape  = mape_metric(pred_phys, true_phys)
+    mae   = mae_metric(pred_phys, true_phys)
+    return loss, mape, mae
 
 
 # --------------------------------------------------------------------------- #
@@ -167,11 +156,18 @@ def run_epoch(
     use_cuda = (device.type == "cuda")
     with ctx:
         pbar = tqdm(loader, desc=desc, leave=False, unit="batch", dynamic_ncols=True)
+        unit = "ms" if model.target == "delay" else "kbps"
+        scale = 1000.0 if model.target == "delay" else 1e-3  # s→ms, bps→kbps
         for batch in pbar:
             for graph in batch:
-                amp_ctx = torch.amp.autocast(device.type, enabled=use_cuda) if _use_modern_amp else autocast(enabled=use_cuda)
-                with amp_ctx:
-                    loss, smape, mae = process_graph(model, graph, device, normalizer)
+                try:
+                    amp_ctx = torch.amp.autocast(device.type, enabled=use_cuda) \
+                              if _use_modern_amp else autocast(enabled=use_cuda)
+                    with amp_ctx:
+                        loss, mape, mae = process_graph(model, graph, device, normalizer)
+                except Exception as e:
+                    tqdm.write(f"  [WARN] skipping bad graph: {e}")
+                    continue
                 
                 if training:
                     optimizer.zero_grad()
@@ -186,10 +182,13 @@ def run_epoch(
                         nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
                         optimizer.step()
                 total_loss += loss.item()
-                total_mape += smape
+                total_mape += mape
                 total_mae  += mae
                 n          += 1
-            pbar.set_postfix(loss=f"{total_loss/max(n,1):.4f}", mae=f"{total_mae/max(n,1):.4f}", smape=f"{total_mape/max(n,1):.4f}")
+            mae_display = total_mae / max(n, 1) * scale
+            pbar.set_postfix(loss=f"{total_loss/max(n,1):.4f}",
+                             mae=f"{mae_display:.1f}{unit}",
+                             mape=f"{total_mape/max(n,1):.4f}")
 
     return total_loss / max(n, 1), total_mape / max(n, 1), total_mae / max(n, 1)
 
@@ -277,8 +276,11 @@ def train_scenario(
     no_improve = 0
     history    = {"train": [], "val": []}
 
-    print(f"\n[{label}] {'Epoch':>6}  {'Train Loss':>12}  {'Val Loss':>10}  {'Val MAE':>10}  {'Train SMAPE':>12}  {'Val SMAPE':>10}  {'Best?':>5}  {'LR':>10}  {'Time':>7}")
-    print(f"[{label}] " + "-" * 105)
+    unit = "ms" if target == "delay" else "kbps"
+    scale = 1000.0 if target == "delay" else 1e-3  # s→ms, bps→kbps
+
+    print(f"\n[{label}] {'Epoch':>6}  {'Train Loss':>12}  {'Val Loss':>10}  {f'Val MAE ({unit})':>12}  {'Train MAPE':>12}  {'Val MAPE':>10}  {'Best?':>5}  {'LR':>10}  {'Time':>7}")
+    print(f"[{label}] " + "-" * 107)
 
     epoch_bar = tqdm(range(1, epochs + 1), desc=f"[{label}]", unit="ep", dynamic_ncols=True)
 
@@ -293,6 +295,14 @@ def train_scenario(
             model, val_loader,   device, normalizer,
             desc=f"  val   ep{epoch:03d}", scaler=scaler
         )
+
+        if epoch == 1:
+            res = predict(model, val_ds[0], normalizer, device)
+            p_val, t_val = res[f"{target}_pred"], res[f"{target}_true"]
+            if len(p_val) > 0:
+                p_min, p_max = p_val.min() * scale, p_val.max() * scale
+                t_min, t_max = t_val.min() * scale, t_val.max() * scale
+                tqdm.write(f"  [Sanity Check] {target.capitalize()} Pred range: [{p_min:.2f}, {p_max:.2f}] {unit} | True range: [{t_min:.2f}, {t_max:.2f}] {unit}")
 
         scheduler.step(val_loss)
         elapsed = time.time() - t0
@@ -334,7 +344,7 @@ def train_scenario(
 
         marker = "  ★  " if is_best else "     "
         tqdm.write(
-            f"[{label}] {epoch:6d}  {train_loss:12.4f}  {val_loss:10.4f}  {val_mae:10.4f}  "
+            f"[{label}] {epoch:6d}  {train_loss:12.4f}  {val_loss:10.4f}  {val_mae * scale:12.4f}  "
             f"{train_mape*100:11.2f}%  {val_mape*100:9.2f}%  {marker}  {cur_lr:10.2e}  {elapsed:6.1f}s"
         )
 
@@ -356,10 +366,10 @@ def train_scenario(
 
     print(f"\n{'='*60}")
     print(f"[{label}] TEST RESULTS")
-    print(f"  SMAPE:              {test_mape:.4%}")
-    print(f"  MAE:               {test_mae:.4f}")
-    print(f"  Best val loss:     {best_val:.4f}")
-    print(f"  Checkpoint:        {best_ckpt}")
+    print(f"  MAPE:               {test_mape:.4%}")
+    print(f"  MAE:                {test_mae * scale:.4f} {unit}")
+    print(f"  Best val loss:      {best_val:.4f}")
+    print(f"  Checkpoint:         {best_ckpt}")
     print(f"{'='*60}\n")
 
     return {
@@ -384,10 +394,10 @@ def train_scenario(
 def plot_loss_curve(history: dict, scenario_id: str, target: str, save_dir: str):
     os.makedirs(save_dir, exist_ok=True)
     fig, ax = plt.subplots(figsize=(9, 5))
-    ax.plot(history["train"], label="Train SMAPE", linewidth=2, color="#4C72B0")
-    ax.plot(history["val"],   label="Val SMAPE",   linewidth=2, color="#DD8452")
+    ax.plot(history["train"], label="Train MAPE", linewidth=2, color="#4C72B0")
+    ax.plot(history["val"],   label="Val MAPE",   linewidth=2, color="#DD8452")
     ax.set_xlabel("Epoch", fontsize=13)
-    ax.set_ylabel(f"SMAPE Loss ({target.capitalize()})", fontsize=13)
+    ax.set_ylabel(f"MAPE Loss ({target.capitalize()})", fontsize=13)
     ax.set_title(f"{scenario_id} — Training Curve ({target.capitalize()})",
                  fontsize=14, fontweight="bold")
     ax.legend(fontsize=12)
@@ -476,7 +486,7 @@ def print_results_table(all_results: List[dict]):
     print(f"\n{'='*70}")
     print(f"  TRAINING RESULTS SUMMARY")
     print(f"{'='*70}")
-    print(f"  {'Scenario':<10} {'Target':<12} {'Train SMAPE':>12} {'Val SMAPE':>12} {'Test SMAPE':>12}")
+    print(f"  {'Scenario':<10} {'Target':<12} {'Train MAPE':>12} {'Val MAPE':>12} {'Test MAPE':>12}")
     print(f"  {'-'*58}")
 
     for r in sorted(all_results, key=lambda x: (x["scenario"], x["target"])):
