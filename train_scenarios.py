@@ -167,7 +167,7 @@ def run_epoch(
             for graph in batch:
                 amp_ctx = torch.amp.autocast(device.type, enabled=use_cuda) if _use_modern_amp else autocast(enabled=use_cuda)
                 with amp_ctx:
-                    loss, mape = process_graph(model, graph, device, normalizer)
+                    loss, mape, mae = process_graph(model, graph, device, normalizer)
                 
                 if training:
                     optimizer.zero_grad()
