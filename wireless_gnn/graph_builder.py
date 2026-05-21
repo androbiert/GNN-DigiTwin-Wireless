@@ -38,9 +38,9 @@ def _parse_qsize_bytes(qsize_str: str) -> float:
 
 def _euclidean_distance(pos1: dict, pos2: dict) -> float:
     """3-D Euclidean distance between two node position dicts."""
-    dx = pos1["x"] - pos2["x"]
-    dy = pos1["y"] - pos2["y"]
-    dz = pos1["z"] - pos2["z"]
+    dx = pos1.get("x", 0.0) - pos2.get("x", 0.0)
+    dy = pos1.get("y", 0.0) - pos2.get("y", 0.0)
+    dz = pos1.get("z", 0.0) - pos2.get("z", 0.0)
     return math.sqrt(dx * dx + dy * dy + dz * dz)
 
 
