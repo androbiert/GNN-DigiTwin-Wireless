@@ -41,6 +41,7 @@ if _project_root not in sys.path:
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import matplotlib
@@ -110,6 +111,7 @@ def run_epoch(
     normalizer: FeatureNormalizer,
     optimizer:  Optional[torch.optim.Optimizer] = None,
     desc:       str = "",
+    scaler:     Optional[GradScaler] = None,
 ) -> float:
     training = optimizer is not None
     model.train(training)
@@ -118,16 +120,26 @@ def run_epoch(
     n     = 0
 
     ctx = torch.enable_grad() if training else torch.no_grad()
+    use_cuda = (device.type == "cuda")
     with ctx:
         pbar = tqdm(loader, desc=desc, leave=False, unit="batch", dynamic_ncols=True)
         for batch in pbar:
             for graph in batch:
-                loss, mape = process_graph(model, graph, device, normalizer)
+                with autocast(enabled=use_cuda):
+                    loss, mape = process_graph(model, graph, device, normalizer)
+                
                 if training:
                     optimizer.zero_grad()
-                    loss.backward()
-                    nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-                    optimizer.step()
+                    if scaler is not None and use_cuda:
+                        scaler.scale(loss).backward()
+                        scaler.unscale_(optimizer)
+                        nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        loss.backward()
+                        nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                        optimizer.step()
                 total += mape
                 n     += 1
             pbar.set_postfix(mape=f"{total/max(n,1):.4f}")
@@ -155,6 +167,7 @@ def train_scenario(
     device_str:     str   = "auto",
     checkpoint_dir: str   = "checkpoints",
     seed:           int   = 42,
+    subsample_ratio: float = 1.0,
 ) -> dict:
     """
     Train one model for a specific scenario × target.
@@ -177,10 +190,11 @@ def train_scenario(
         scenario_id=scenario_id,
         target=target,
         seed=seed,
+        subsample_ratio=subsample_ratio,
     )
-    train_loader = DataLoader(train_ds, batch_size=1, shuffle=True,  collate_fn=collate_fn)
-    val_loader   = DataLoader(val_ds,   batch_size=1, shuffle=False, collate_fn=collate_fn)
-    test_loader  = DataLoader(test_ds,  batch_size=1, shuffle=False, collate_fn=collate_fn)
+    train_loader = DataLoader(train_ds, batch_size=32, shuffle=True,  collate_fn=collate_fn , pin_memory  = True )
+    val_loader   = DataLoader(val_ds,   batch_size=64, shuffle=False, collate_fn=collate_fn, pin_memory=True)
+    test_loader  = DataLoader(test_ds,  batch_size=64, shuffle=False, collate_fn=collate_fn, pin_memory=True)
 
     print(f"[{label}] Samples: train={len(train_ds)}, val={len(val_ds)}, test={len(test_ds)}")
 
@@ -200,6 +214,7 @@ def train_scenario(
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5
     )
+    scaler = GradScaler() if device.type == "cuda" else None
 
     # ── Checkpoint directory ──────────────────────────────────────────────── #
     ckpt_dir = os.path.join(checkpoint_dir, scenario_id, target)
@@ -220,10 +235,14 @@ def train_scenario(
     for epoch in epoch_bar:
         t0 = time.time()
 
-        train_mape = run_epoch(model, train_loader, device, normalizer, optimizer,
-                               desc=f"  train ep{epoch:03d}")
-        val_mape   = run_epoch(model, val_loader,   device, normalizer,
-                               desc=f"  val   ep{epoch:03d}")
+        train_mape = run_epoch(
+            model, train_loader, device, normalizer, optimizer,
+            desc=f"  train ep{epoch:03d}", scaler=scaler
+        )
+        val_mape   = run_epoch(
+            model, val_loader,   device, normalizer,
+            desc=f"  val   ep{epoch:03d}", scaler=scaler
+        )
 
         scheduler.step(val_mape)
         elapsed = time.time() - t0
@@ -280,7 +299,10 @@ def train_scenario(
 
     # ── Test final ────────────────────────────────────────────────────────── #
     model.load_state_dict(best_state)
-    test_mape = run_epoch(model, test_loader, device, normalizer, desc="  test")
+    test_mape = run_epoch(
+        model, test_loader, device, normalizer,
+        desc="  test", scaler=scaler
+    )
 
     print(f"\n{'='*60}")
     print(f"[{label}] TEST RESULTS")
@@ -467,6 +489,8 @@ Examples:
     parser.add_argument("--checkpoint-dir", default="checkpoints")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--subsample", type=float, default=0.2,
+                        help="Subsample ratio of snapshots (e.g. 0.2 for 20% to speed up training)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Only discover scenarios; don't train")
     parser.add_argument("--no-validate", action="store_true",
@@ -555,6 +579,7 @@ Examples:
                 device_str    = args.device,
                 checkpoint_dir= args.checkpoint_dir,
                 seed          = args.seed,
+                subsample_ratio=args.subsample,
             )
 
             # ── Plots ────────────────────────────────────────────────────── #

@@ -167,6 +167,7 @@ def load_scenario_snapshots(
     filter_outliers: bool = True,
     outlier_percentile: float = 95.0,
     verbose: bool = True,
+    subsample_ratio: float = 1.0,
 ) -> List[dict]:
     """
     Load all valid graph snapshots from a list of data.json paths.
@@ -185,6 +186,8 @@ def load_scenario_snapshots(
         Percentile threshold for outlier filtering.
     verbose : bool
         Print loading progress.
+    subsample_ratio : float
+        Ratio of snapshots to keep (e.g., 0.2 keeps 20%).
 
     Returns
     -------
@@ -204,6 +207,10 @@ def load_scenario_snapshots(
         except (json.JSONDecodeError, OSError) as e:
             print(f"[dataset] WARNING: cannot read {fpath}: {e}")
             continue
+
+        if subsample_ratio < 1.0:
+            step = max(1, int(1.0 / subsample_ratio))
+            data = data[::step]
 
         n_valid = 0
         for snapshot in data:
@@ -338,6 +345,7 @@ def build_scenario_datasets(
     seed:         int   = 42,
     filter_outliers:    bool  = True,
     outlier_percentile: float = 95.0,
+    subsample_ratio:    float = 1.0,
 ) -> Tuple["WirelessDataset", "WirelessDataset", "WirelessDataset", FeatureNormalizer]:
     """
     Load snapshots from given data_paths, split, normalise.
@@ -354,6 +362,8 @@ def build_scenario_datasets(
         Split ratios.
     seed : int
         Random seed for reproducibility.
+    subsample_ratio : float
+        Ratio of snapshots to keep (e.g., 0.2 keeps 20%).
 
     Returns
     -------
@@ -365,6 +375,7 @@ def build_scenario_datasets(
         target=target,
         filter_outliers=filter_outliers,
         outlier_percentile=outlier_percentile,
+        subsample_ratio=subsample_ratio,
     )
 
     if not all_graphs:
