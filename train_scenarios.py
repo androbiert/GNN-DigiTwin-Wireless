@@ -72,15 +72,23 @@ from wireless_gnn.scenario_registry import (
 
 
 # --------------------------------------------------------------------------- #
-# Loss
+# Loss helpers
 # --------------------------------------------------------------------------- #
 
-def mape_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
-    """MAPE loss that masks out near-zero targets to avoid inf."""
-    mask = target.abs() > eps          # exclude flows with ~0 target
-    if mask.sum() == 0:
-        return torch.tensor(0.0, device=pred.device, requires_grad=True)
-    return torch.mean(torch.abs((pred[mask] - target[mask]) / target[mask].abs()))
+def mse_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """MSE loss in normalized space — smooth, stable gradients for training."""
+    return torch.mean((pred - target) ** 2)
+
+
+def mape_metric(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> float:
+    """MAPE in physical space — for human-readable evaluation only (no grad)."""
+    with torch.no_grad():
+        mask = target.abs() > eps
+        if mask.sum() == 0:
+            return 0.0
+        return torch.mean(torch.abs(
+            (pred[mask] - target[mask]) / target[mask].abs()
+        )).item()
 
 
 # --------------------------------------------------------------------------- #
@@ -95,25 +103,33 @@ def process_graph(
 ) -> Tuple[torch.Tensor, float]:
     pred, _ = model(graph)
 
-    # Force FP32 for denormalization — FP16 overflows on large throughput values
+    # Force FP32 for denormalization
     pred = pred.float()
 
     if model.target == 'delay':
         mean = torch.tensor(normalizer.delay_mean, device=device, dtype=torch.float32)
         std  = torch.tensor(normalizer.delay_std,  device=device, dtype=torch.float32)
-        true = torch.tensor(np.asarray(graph["target_delay"]),
-                            dtype=torch.float32, device=device)
-        # pred is z-score in log1p space -> undo z-score -> undo log1p
+        # Target in normalized space (z-scored log1p) — for training loss
+        true_norm = torch.tensor(np.asarray(graph["target_delay_norm"]),
+                                 dtype=torch.float32, device=device)
+        # Target in physical space — for MAPE reporting
+        true_phys = torch.tensor(np.asarray(graph["target_delay"]),
+                                 dtype=torch.float32, device=device)
         pred_phys = torch.expm1(pred * std + mean)
     else:
         mean = torch.tensor(normalizer.tput_mean, device=device, dtype=torch.float32)
         std  = torch.tensor(normalizer.tput_std,  device=device, dtype=torch.float32)
-        true = torch.tensor(np.asarray(graph["target_throughput"]),
-                            dtype=torch.float32, device=device)
+        true_norm = torch.tensor(np.asarray(graph["target_throughput_norm"]),
+                                 dtype=torch.float32, device=device)
+        true_phys = torch.tensor(np.asarray(graph["target_throughput"]),
+                                 dtype=torch.float32, device=device)
         pred_phys = pred * std + mean
 
-    loss = mape_loss(pred_phys, true)
-    return loss, loss.item()
+    # Training loss: MSE in normalized space (stable gradients)
+    loss = mse_loss(pred, true_norm)
+    # Evaluation metric: MAPE in physical space (human-readable)
+    mape = mape_metric(pred_phys, true_phys)
+    return loss, mape
 
 
 # --------------------------------------------------------------------------- #
