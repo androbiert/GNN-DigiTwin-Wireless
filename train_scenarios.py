@@ -75,9 +75,9 @@ from wireless_gnn.scenario_registry import (
 # Loss helpers
 # --------------------------------------------------------------------------- #
 
-def mse_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """MSE loss in normalized space — smooth, stable gradients for training."""
-    return torch.mean((pred - target) ** 2)
+def huber_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Huber loss (Smooth L1) in normalized space — robust to outliers."""
+    return torch.nn.functional.smooth_l1_loss(pred, target, beta=1.0)
 
 
 def mape_metric(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> float:
@@ -120,7 +120,11 @@ def process_graph(
         # Target in physical space — for MAPE reporting
         true_phys = torch.tensor(np.asarray(graph["target_delay"]),
                                  dtype=torch.float32, device=device)
-        pred_phys = torch.expm1(pred * std + mean)
+        
+        # Prevent explosive expm1 values during early epochs by capping log exponent
+        log_pred = torch.clamp(pred * std + mean, max=15.0)
+        # Delay cannot be negative, clamp to 0 to prevent artificial MAPE inflation
+        pred_phys = torch.clamp(torch.expm1(log_pred), min=0.0)
     else:
         mean = torch.tensor(normalizer.tput_mean, device=device, dtype=torch.float32)
         std  = torch.tensor(normalizer.tput_std,  device=device, dtype=torch.float32)
@@ -128,10 +132,11 @@ def process_graph(
                                  dtype=torch.float32, device=device)
         true_phys = torch.tensor(np.asarray(graph["target_throughput"]),
                                  dtype=torch.float32, device=device)
-        pred_phys = pred * std + mean
+        # Throughput cannot be negative
+        pred_phys = torch.clamp(pred * std + mean, min=0.0)
 
-    # Training loss: MSE in normalized space (stable gradients)
-    loss = mse_loss(pred, true_norm)
+    # Training loss: Huber (Smooth L1) in normalized space for stable, outlier-resistant gradients
+    loss = huber_loss(pred, true_norm)
     # Evaluation metrics: MAPE and MAE in physical space (human-readable)
     mape = mape_metric(pred_phys, true_phys)
     mae  = mae_metric(pred_phys, true_phys)
@@ -405,13 +410,14 @@ def predict(model, graph, normalizer, device):
         key_pred, key_true = "delay_pred", "delay_true"
         true = np.asarray(graph["target_delay"])
         # Undo z-score then undo log1p to get physical delay
-        pred_phys = torch.expm1(pred * std + mean).cpu().numpy()
+        log_pred = torch.clamp(pred * std + mean, max=15.0)
+        pred_phys = torch.clamp(torch.expm1(log_pred), min=0.0).cpu().numpy()
     else:
         mean = torch.tensor(normalizer.tput_mean, device=device)
         std  = torch.tensor(normalizer.tput_std,  device=device)
         key_pred, key_true = "throughput_pred", "throughput_true"
         true = np.asarray(graph["target_throughput"])
-        pred_phys = (pred * std + mean).cpu().numpy()
+        pred_phys = torch.clamp(pred * std + mean, min=0.0).cpu().numpy()
 
     return {
         key_pred: pred_phys,
