@@ -350,7 +350,7 @@ def train_scenario(
 
     # ── Test final ────────────────────────────────────────────────────────── #
     model.load_state_dict(best_state)
-    test_mape = run_epoch(
+    test_loss, test_mape, test_mae = run_epoch(
         model, test_loader, device, normalizer,
         desc="  test", scaler=scaler
     )
@@ -358,7 +358,8 @@ def train_scenario(
     print(f"\n{'='*60}")
     print(f"[{label}] TEST RESULTS")
     print(f"  MAPE:              {test_mape:.4%}")
-    print(f"  Best val MAPE:     {best_val:.4%}")
+    print(f"  MAE:               {test_mae:.4f}")
+    print(f"  Best val loss:     {best_val:.4f}")
     print(f"  Checkpoint:        {best_ckpt}")
     print(f"{'='*60}\n")
 
