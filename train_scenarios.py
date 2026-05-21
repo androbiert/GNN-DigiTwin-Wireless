@@ -90,6 +90,11 @@ def mape_metric(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> 
             (pred[mask] - target[mask]) / target[mask].abs()
         )).item()
 
+def mae_metric(pred: torch.Tensor, target: torch.Tensor) -> float:
+    """MAE in physical space (e.g. absolute seconds or bps) — no grad."""
+    with torch.no_grad():
+        return torch.mean(torch.abs(pred - target)).item()
+
 
 # --------------------------------------------------------------------------- #
 # Single-graph forward + loss
@@ -127,9 +132,10 @@ def process_graph(
 
     # Training loss: MSE in normalized space (stable gradients)
     loss = mse_loss(pred, true_norm)
-    # Evaluation metric: MAPE in physical space (human-readable)
+    # Evaluation metrics: MAPE and MAE in physical space (human-readable)
     mape = mape_metric(pred_phys, true_phys)
-    return loss, mape
+    mae  = mae_metric(pred_phys, true_phys)
+    return loss, mape, mae
 
 
 # --------------------------------------------------------------------------- #
@@ -144,12 +150,13 @@ def run_epoch(
     optimizer:  Optional[torch.optim.Optimizer] = None,
     desc:       str = "",
     scaler:     Optional[GradScaler] = None,
-) -> Tuple[float, float]:
+) -> Tuple[float, float, float]:
     training = optimizer is not None
     model.train(training)
 
     total_loss = 0.0
     total_mape = 0.0
+    total_mae  = 0.0
     n          = 0
 
     ctx = torch.enable_grad() if training else torch.no_grad()
@@ -176,10 +183,11 @@ def run_epoch(
                         optimizer.step()
                 total_loss += loss.item()
                 total_mape += mape
+                total_mae  += mae
                 n          += 1
-            pbar.set_postfix(loss=f"{total_loss/max(n,1):.4f}", mape=f"{total_mape/max(n,1):.4f}")
+            pbar.set_postfix(loss=f"{total_loss/max(n,1):.4f}", mae=f"{total_mae/max(n,1):.4f}", mape=f"{total_mape/max(n,1):.4f}")
 
-    return total_loss / max(n, 1), total_mape / max(n, 1)
+    return total_loss / max(n, 1), total_mape / max(n, 1), total_mae / max(n, 1)
 
 
 # --------------------------------------------------------------------------- #
@@ -265,19 +273,19 @@ def train_scenario(
     no_improve = 0
     history    = {"train": [], "val": []}
 
-    print(f"\n[{label}] {'Epoch':>6}  {'Train Loss':>12}  {'Val Loss':>10}  {'Train MAPE':>12}  {'Val MAPE':>10}  {'Best?':>5}  {'LR':>10}  {'Time':>7}")
-    print(f"[{label}] " + "-" * 90)
+    print(f"\n[{label}] {'Epoch':>6}  {'Train Loss':>12}  {'Val Loss':>10}  {'Val MAE':>10}  {'Train MAPE':>12}  {'Val MAPE':>10}  {'Best?':>5}  {'LR':>10}  {'Time':>7}")
+    print(f"[{label}] " + "-" * 105)
 
     epoch_bar = tqdm(range(1, epochs + 1), desc=f"[{label}]", unit="ep", dynamic_ncols=True)
 
     for epoch in epoch_bar:
         t0 = time.time()
 
-        train_loss, train_mape = run_epoch(
+        train_loss, train_mape, train_mae = run_epoch(
             model, train_loader, device, normalizer, optimizer,
             desc=f"  train ep{epoch:03d}", scaler=scaler
         )
-        val_loss, val_mape = run_epoch(
+        val_loss, val_mape, val_mae = run_epoch(
             model, val_loader,   device, normalizer,
             desc=f"  val   ep{epoch:03d}", scaler=scaler
         )
@@ -322,7 +330,7 @@ def train_scenario(
 
         marker = "  ★  " if is_best else "     "
         tqdm.write(
-            f"[{label}] {epoch:6d}  {train_loss:12.4f}  {val_loss:10.4f}  "
+            f"[{label}] {epoch:6d}  {train_loss:12.4f}  {val_loss:10.4f}  {val_mae:10.4f}  "
             f"{train_mape*100:11.2f}%  {val_mape*100:9.2f}%  {marker}  {cur_lr:10.2e}  {elapsed:6.1f}s"
         )
 
