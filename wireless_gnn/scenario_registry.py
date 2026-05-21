@@ -130,11 +130,48 @@ def _validate_data(data_path: str, quick_limit: int = 10) -> dict:
 # Discovery
 # --------------------------------------------------------------------------- #
 
+def sim_config_to_dict(c: SimConfig) -> dict:
+    return {
+        "scenario_id":    c.scenario_id,
+        "tx_power":       c.tx_power,
+        "scheduler":      c.scheduler,
+        "queue_size":     c.queue_size,
+        "data_path":      c.data_path,
+        "folder_name":    c.folder_name,
+        "n_snapshots":    c.n_snapshots,
+        "n_with_flows":   c.n_with_flows,
+        "has_delay":      c.has_delay,
+        "has_throughput": c.has_throughput,
+        "traffic_types":  c.traffic_types,
+    }
+
+
+def sim_config_from_dict(d: dict) -> SimConfig:
+    return SimConfig(
+        scenario_id    = d["scenario_id"],
+        tx_power       = d["tx_power"],
+        scheduler      = d["scheduler"],
+        queue_size     = d["queue_size"],
+        data_path      = d["data_path"],
+        folder_name    = d["folder_name"],
+        n_snapshots    = d.get("n_snapshots", 0),
+        n_with_flows   = d.get("n_with_flows", 0),
+        has_delay      = d.get("has_delay", False),
+        has_throughput = d.get("has_throughput", False),
+        traffic_types  = d.get("traffic_types", []),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Discovery
+# --------------------------------------------------------------------------- #
+
 def discover_scenarios(
     project_root: str,
     data_dir:     str = "Data",
     validate:     bool = True,
     verbose:      bool = True,
+    use_cache:    bool = True,
 ) -> List[SimConfig]:
     """Discover all simulation configs under <project_root>/<data_dir>/SC*/simulations/.
 
@@ -148,6 +185,8 @@ def discover_scenarios(
         If True, quick-scans each data.json to check for flows/delay/throughput.
     verbose : bool
         Print discovery progress.
+    use_cache : bool
+        If True, try to load and save to `.scenario_cache.json` in the data directory.
 
     Returns
     -------
@@ -157,6 +196,23 @@ def discover_scenarios(
     base = os.path.join(project_root, data_dir)
     if not os.path.isdir(base):
         raise FileNotFoundError(f"Data directory not found: {base}")
+
+    cache_path = os.path.join(base, ".scenario_cache.json")
+    if use_cache and os.path.isfile(cache_path):
+        if verbose:
+            print(f"[registry] Loading cached scenario info from {cache_path}")
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                cached_data = json.load(f)
+            configs = [sim_config_from_dict(d) for d in cached_data]
+            # Quick check: make sure the first data path still exists to validate cache
+            if configs and os.path.isfile(configs[0].data_path):
+                if verbose:
+                    print(f"[registry] Loaded {len(configs)} configs from cache.")
+                return configs
+        except Exception as e:
+            if verbose:
+                print(f"[registry] WARNING: Failed to load cache: {e}. Re-scanning...")
 
     configs = []
     skipped_no_parse = 0
@@ -225,6 +281,18 @@ def discover_scenarios(
             print(f"[registry] Skipped {skipped_no_parse} folders (name parse failed)")
         if skipped_no_data:
             print(f"[registry] Skipped {skipped_no_data} folders (no data.json)")
+
+    # Save to cache
+    if use_cache:
+        try:
+            cached_data = [sim_config_to_dict(c) for c in configs]
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(cached_data, f, indent=2)
+            if verbose:
+                print(f"[registry] Saved scenario discovery cache to {cache_path}")
+        except Exception as e:
+            if verbose:
+                print(f"[registry] WARNING: Failed to save cache: {e}")
 
     return configs
 

@@ -506,6 +506,8 @@ Examples:
                         help="Only discover scenarios; don't train")
     parser.add_argument("--no-validate", action="store_true",
                         help="Skip data validation during discovery (faster)")
+    parser.add_argument("--recache", action="store_true",
+                        help="Force re-scanning of scenarios and overwrite cache file")
 
     args = parser.parse_args()
 
@@ -524,6 +526,7 @@ Examples:
         data_dir=args.data_dir,
         validate=not args.no_validate,
         verbose=True,
+        use_cache=not args.recache,
     )
     print_summary(all_configs)
 
