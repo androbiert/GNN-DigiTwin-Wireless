@@ -76,7 +76,11 @@ from wireless_gnn.scenario_registry import (
 # --------------------------------------------------------------------------- #
 
 def mape_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
-    return torch.mean(torch.abs((pred - target) / (target.abs() + eps)))
+    """MAPE loss that masks out near-zero targets to avoid inf."""
+    mask = target.abs() > eps          # exclude flows with ~0 target
+    if mask.sum() == 0:
+        return torch.tensor(0.0, device=pred.device, requires_grad=True)
+    return torch.mean(torch.abs((pred[mask] - target[mask]) / target[mask].abs()))
 
 
 # --------------------------------------------------------------------------- #
@@ -91,16 +95,19 @@ def process_graph(
 ) -> Tuple[torch.Tensor, float]:
     pred, _ = model(graph)
 
+    # Force FP32 for denormalization — FP16 overflows on large throughput values
+    pred = pred.float()
+
     if model.target == 'delay':
-        mean = torch.tensor(normalizer.delay_mean, device=device)
-        std  = torch.tensor(normalizer.delay_std,  device=device)
+        mean = torch.tensor(normalizer.delay_mean, device=device, dtype=torch.float32)
+        std  = torch.tensor(normalizer.delay_std,  device=device, dtype=torch.float32)
         true = torch.tensor(np.asarray(graph["target_delay"]),
                             dtype=torch.float32, device=device)
         # pred is z-score in log1p space -> undo z-score -> undo log1p
         pred_phys = torch.expm1(pred * std + mean)
     else:
-        mean = torch.tensor(normalizer.tput_mean, device=device)
-        std  = torch.tensor(normalizer.tput_std,  device=device)
+        mean = torch.tensor(normalizer.tput_mean, device=device, dtype=torch.float32)
+        std  = torch.tensor(normalizer.tput_std,  device=device, dtype=torch.float32)
         true = torch.tensor(np.asarray(graph["target_throughput"]),
                             dtype=torch.float32, device=device)
         pred_phys = pred * std + mean
