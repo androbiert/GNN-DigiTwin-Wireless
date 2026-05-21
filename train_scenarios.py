@@ -96,13 +96,15 @@ def process_graph(
         std  = torch.tensor(normalizer.delay_std,  device=device)
         true = torch.tensor(np.asarray(graph["target_delay"]),
                             dtype=torch.float32, device=device)
+        # pred is z-score in log1p space -> undo z-score -> undo log1p
+        pred_phys = torch.expm1(pred * std + mean)
     else:
         mean = torch.tensor(normalizer.tput_mean, device=device)
         std  = torch.tensor(normalizer.tput_std,  device=device)
         true = torch.tensor(np.asarray(graph["target_throughput"]),
                             dtype=torch.float32, device=device)
+        pred_phys = pred * std + mean
 
-    pred_phys = pred * std + mean
     loss = mape_loss(pred_phys, true)
     return loss, loss.item()
 
@@ -369,14 +371,17 @@ def predict(model, graph, normalizer, device):
         std  = torch.tensor(normalizer.delay_std,  device=device)
         key_pred, key_true = "delay_pred", "delay_true"
         true = np.asarray(graph["target_delay"])
+        # Undo z-score then undo log1p to get physical delay
+        pred_phys = torch.expm1(pred * std + mean).cpu().numpy()
     else:
         mean = torch.tensor(normalizer.tput_mean, device=device)
         std  = torch.tensor(normalizer.tput_std,  device=device)
         key_pred, key_true = "throughput_pred", "throughput_true"
         true = np.asarray(graph["target_throughput"])
+        pred_phys = (pred * std + mean).cpu().numpy()
 
     return {
-        key_pred: (pred * std + mean).cpu().numpy(),
+        key_pred: pred_phys,
         key_true: true,
     }
 
