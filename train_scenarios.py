@@ -41,7 +41,14 @@ if _project_root not in sys.path:
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.cuda.amp import autocast, GradScaler
+# Try to import from modern torch.amp to avoid deprecation warnings in PyTorch 2.1+
+try:
+    import torch.amp
+    _use_modern_amp = True
+    GradScaler = torch.amp.GradScaler
+except (ImportError, AttributeError):
+    _use_modern_amp = False
+    from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import matplotlib
@@ -125,7 +132,8 @@ def run_epoch(
         pbar = tqdm(loader, desc=desc, leave=False, unit="batch", dynamic_ncols=True)
         for batch in pbar:
             for graph in batch:
-                with autocast(enabled=use_cuda):
+                amp_ctx = torch.amp.autocast(device.type, enabled=use_cuda) if _use_modern_amp else autocast(enabled=use_cuda)
+                with amp_ctx:
                     loss, mape = process_graph(model, graph, device, normalizer)
                 
                 if training:
@@ -214,7 +222,10 @@ def train_scenario(
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5
     )
-    scaler = GradScaler() if device.type == "cuda" else None
+    if device.type == "cuda":
+        scaler = GradScaler("cuda") if _use_modern_amp else GradScaler()
+    else:
+        scaler = None
 
     # ── Checkpoint directory ──────────────────────────────────────────────── #
     ckpt_dir = os.path.join(checkpoint_dir, scenario_id, target)
