@@ -144,12 +144,13 @@ def run_epoch(
     optimizer:  Optional[torch.optim.Optimizer] = None,
     desc:       str = "",
     scaler:     Optional[GradScaler] = None,
-) -> float:
+) -> Tuple[float, float]:
     training = optimizer is not None
     model.train(training)
 
-    total = 0.0
-    n     = 0
+    total_loss = 0.0
+    total_mape = 0.0
+    n          = 0
 
     ctx = torch.enable_grad() if training else torch.no_grad()
     use_cuda = (device.type == "cuda")
@@ -173,11 +174,12 @@ def run_epoch(
                         loss.backward()
                         nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
                         optimizer.step()
-                total += mape
-                n     += 1
-            pbar.set_postfix(mape=f"{total/max(n,1):.4f}")
+                total_loss += loss.item()
+                total_mape += mape
+                n          += 1
+            pbar.set_postfix(loss=f"{total_loss/max(n,1):.4f}", mape=f"{total_mape/max(n,1):.4f}")
 
-    return total / max(n, 1)
+    return total_loss / max(n, 1), total_mape / max(n, 1)
 
 
 # --------------------------------------------------------------------------- #
@@ -263,24 +265,24 @@ def train_scenario(
     no_improve = 0
     history    = {"train": [], "val": []}
 
-    print(f"\n[{label}] {'Epoch':>6}  {'Train MAPE':>12}  {'Val MAPE':>12}  {'Best?':>6}  {'LR':>10}  {'Time':>7}")
-    print(f"[{label}] " + "-" * 65)
+    print(f"\n[{label}] {'Epoch':>6}  {'Train Loss':>12}  {'Val Loss':>10}  {'Train MAPE':>12}  {'Val MAPE':>10}  {'Best?':>5}  {'LR':>10}  {'Time':>7}")
+    print(f"[{label}] " + "-" * 90)
 
     epoch_bar = tqdm(range(1, epochs + 1), desc=f"[{label}]", unit="ep", dynamic_ncols=True)
 
     for epoch in epoch_bar:
         t0 = time.time()
 
-        train_mape = run_epoch(
+        train_loss, train_mape = run_epoch(
             model, train_loader, device, normalizer, optimizer,
             desc=f"  train ep{epoch:03d}", scaler=scaler
         )
-        val_mape   = run_epoch(
+        val_loss, val_mape = run_epoch(
             model, val_loader,   device, normalizer,
             desc=f"  val   ep{epoch:03d}", scaler=scaler
         )
 
-        scheduler.step(val_mape)
+        scheduler.step(val_loss)
         elapsed = time.time() - t0
         cur_lr  = optimizer.param_groups[0]["lr"]
 
@@ -299,11 +301,11 @@ def train_scenario(
             "val_mape":    val_mape,
         }, epoch_ckpt)
 
-        # ── Best model ────────────────────────────────────────────────────── #
-        is_best = val_mape < best_val
+        # ── Print epoch summary ────────────────────────────────────────────── #
+        is_best = val_loss < best_val
         if is_best:
-            best_val   = val_mape
-            best_state = copy.deepcopy(model.state_dict())
+            best_val   = val_loss
+            best_state = {k: v.cpu() for k, v in model.state_dict().items()}
             no_improve = 0
             torch.save({
                 "scenario":   scenario_id,
@@ -313,15 +315,15 @@ def train_scenario(
                 "epoch":      epoch,
                 "hidden_dim": hidden_dim,
                 "num_heads":  num_heads,
-                "iterations": iterations,
+                                 "iterations": iterations,
             }, best_ckpt)
         else:
             no_improve += 1
 
-        flag = "★" if is_best else ""
+        marker = "  ★  " if is_best else "     "
         tqdm.write(
-            f"[{label}] {epoch:>6}  {train_mape:>12.4%}  {val_mape:>12.4%}  "
-            f"{flag:>6}  {cur_lr:>10.2e}  {elapsed:>6.1f}s"
+            f"[{label}] {epoch:6d}  {train_loss:12.4f}  {val_loss:10.4f}  "
+            f"{train_mape*100:11.2f}%  {val_mape*100:9.2f}%  {marker}  {cur_lr:10.2e}  {elapsed:6.1f}s"
         )
 
         epoch_bar.set_postfix(
