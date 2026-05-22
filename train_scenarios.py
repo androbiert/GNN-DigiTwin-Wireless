@@ -75,16 +75,14 @@ from wireless_gnn.scenario_registry import (
 # Loss helpers
 # --------------------------------------------------------------------------- #
 
-def huber_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """Huber loss (Smooth L1) in normalized space — robust to outliers."""
-    return torch.nn.functional.smooth_l1_loss(pred, target, beta=1.0)
+def mape_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    return torch.mean(torch.abs((pred - target) / (target.abs() + eps)))
 
 
-def mape_metric(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-4) -> float:
-    """MAPE — more stable than SMAPE for near-zero targets."""
-    with torch.no_grad():
-        denom = target.abs().clamp(min=eps)
-        return torch.mean(torch.abs(pred - target) / denom).item()
+def log_huber_loss(pred_log: torch.Tensor, true_log: torch.Tensor,
+                   delta: float = 1.0) -> torch.Tensor:
+    """Huber loss in log-space — robust to scale differences."""
+    return nn.functional.huber_loss(pred_log, true_log, delta=delta)
 
 def mae_metric(pred: torch.Tensor, target: torch.Tensor) -> float:
     """MAE in physical space (e.g. absolute seconds or bps) — no grad."""
@@ -110,25 +108,35 @@ def process_graph(
     if model.target == 'delay':
         mean = torch.tensor(normalizer.delay_mean, device=device, dtype=torch.float32)
         std  = torch.tensor(normalizer.delay_std,  device=device, dtype=torch.float32)
-        true_norm = torch.tensor(np.asarray(graph["target_delay_norm"]),
-                                 dtype=torch.float32, device=device)
-        true_phys = torch.tensor(np.asarray(graph["target_delay"]),
-                                 dtype=torch.float32, device=device)
-        log_pred  = torch.clamp(pred * std + mean, max=5.0)
-        pred_phys = torch.clamp(torch.expm1(log_pred), min=0.0)
+        true_raw = torch.tensor(np.asarray(graph["target_delay"]),
+                                dtype=torch.float32, device=device)
+
+        # Model predicts in log-space (normalizer stores log1p stats)
+        pred_log = pred * std + mean           # log1p(delay) scale
+        true_log = torch.log1p(true_raw)       # log1p(raw delay)
+
+        # Training loss: Huber in log-space (scale-invariant)
+        loss = log_huber_loss(pred_log, true_log)
+
+        # Track log-space loss as metric (MAPE in physical space is misleading)
+        metric = loss.item()
+        
+        # Calculate MAE in physical space for display
+        pred_phys = torch.clamp(torch.expm1(pred_log), min=0.0)
+        mae = mae_metric(pred_phys, true_raw)
+
     else:
         mean = torch.tensor(normalizer.tput_mean, device=device, dtype=torch.float32)
         std  = torch.tensor(normalizer.tput_std,  device=device, dtype=torch.float32)
-        true_norm = torch.tensor(np.asarray(graph["target_throughput_norm"]),
-                                 dtype=torch.float32, device=device)
-        true_phys = torch.tensor(np.asarray(graph["target_throughput"]),
-                                 dtype=torch.float32, device=device)
-        pred_phys = torch.clamp(pred * std + mean, min=0.0)
+        true_raw = torch.tensor(np.asarray(graph["target_throughput"]),
+                                dtype=torch.float32, device=device)
+        
+        pred_phys = pred * std + mean
+        loss = mape_loss(pred_phys, true_raw)
+        metric = loss.item()
+        mae = mae_metric(pred_phys, true_raw)
 
-    loss  = huber_loss(pred, true_norm)
-    mape  = mape_metric(pred_phys, true_phys)
-    mae   = mae_metric(pred_phys, true_phys)
-    return loss, mape, mae
+    return loss, metric, mae
 
 
 # --------------------------------------------------------------------------- #
