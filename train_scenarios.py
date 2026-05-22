@@ -55,7 +55,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from wireless_gnn.model import WirelessNetFermi
+from wireless_gnn.model  import WirelessNetFermi
+from wireless_gnn.model2 import WirelessNetFermiV3
 from wireless_gnn.dataset import (
     WirelessDataset,
     FeatureNormalizer,
@@ -222,6 +223,7 @@ def train_scenario(
     checkpoint_dir: str   = "checkpoints",
     seed:           int   = 42,
     subsample_ratio: float = 1.0,
+    model_class     = None,
 ) -> dict:
     """
     Train one model for a specific scenario × target.
@@ -253,13 +255,17 @@ def train_scenario(
     print(f"[{label}] Samples: train={len(train_ds)}, val={len(val_ds)}, test={len(test_ds)}")
 
     # ── Model ─────────────────────────────────────────────────────────────── #
-    model = WirelessNetFermi(
+    if model_class is None:
+        model_class = WirelessNetFermi
+    model = model_class(
         hidden_dim = hidden_dim,
         num_heads  = num_heads,
         iterations = iterations,
         dropout    = dropout,
         target     = target,
     ).to(device)
+    model_name = model_class.__name__
+    print(f"[{label}] Architecture: {model_name}")
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"[{label}] Parameters: {n_params:,}")
@@ -550,6 +556,8 @@ Examples:
                         help="Train only this scenario (e.g. SC01). Default: all.")
     parser.add_argument("--split-by-policy", action="store_true",
                         help="Train a separate model for each scheduling policy (e.g., PF, DRR, MAXCI)")
+    parser.add_argument("--model", default="v2", choices=["v2", "v3"],
+                        help="Model architecture: 'v2' (original) or 'v3' (enhanced with LayerNorm+FFN+GELU)")
     parser.add_argument("--root", default=".",
                         help="Project root directory")
     parser.add_argument("--data-dir", default="Data",
@@ -653,6 +661,9 @@ Examples:
         print(f"  MODEL {i+1}/{len(training_plan)}: {sc_id} × {tgt}")
         print(f"{'#'*70}")
 
+        # Select model class
+        model_cls = WirelessNetFermiV3 if args.model == "v3" else WirelessNetFermi
+
         try:
             result = train_scenario(
                 scenario_id   = sc_id,
@@ -670,6 +681,7 @@ Examples:
                 checkpoint_dir= args.checkpoint_dir,
                 seed          = args.seed,
                 subsample_ratio=args.subsample,
+                model_class   = model_cls,
             )
 
             # ── Plots ────────────────────────────────────────────────────── #
