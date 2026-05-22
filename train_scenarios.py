@@ -548,6 +548,8 @@ Examples:
                         help="Target to train: 'delay', 'throughput', or 'all'")
     parser.add_argument("--scenario", default=None,
                         help="Train only this scenario (e.g. SC01). Default: all.")
+    parser.add_argument("--split-by-policy", action="store_true",
+                        help="Train a separate model for each scheduling policy (e.g., PF, DRR, MAXCI)")
     parser.add_argument("--root", default=".",
                         help="Project root directory")
     parser.add_argument("--data-dir", default="Data",
@@ -609,21 +611,33 @@ Examples:
         groups = {sc: groups[sc]}
 
     # Build training plan
-    training_plan = []  # list of (scenario_id, target, data_paths)
+    training_plan = []  # list of (model_name, target, data_paths)
     for sc_id, cfgs in groups.items():
         for tgt in targets:
             valid_cfgs = filter_for_target(cfgs, tgt)
             if not valid_cfgs:
                 print(f"[SKIP] {sc_id}/{tgt}: no valid data")
                 continue
-            paths = [c.data_path for c in valid_cfgs]
-            training_plan.append((sc_id, tgt, paths))
+            
+            if args.split_by_policy:
+                # Group configs by their scheduling policy
+                policy_groups = {}
+                for c in valid_cfgs:
+                    policy_groups.setdefault(c.scheduler, []).append(c)
+                
+                for policy, p_cfgs in policy_groups.items():
+                    model_name = f"{sc_id}_{policy}"
+                    paths = [c.data_path for c in p_cfgs]
+                    training_plan.append((model_name, tgt, paths))
+            else:
+                paths = [c.data_path for c in valid_cfgs]
+                training_plan.append((sc_id, tgt, paths))
 
     print(f"\n{'='*70}")
     print(f"  PHASE 2: TRAINING PLAN")
     print(f"{'='*70}")
-    for sc_id, tgt, paths in training_plan:
-        print(f"  {sc_id} × {tgt:<12} → {len(paths)} data files")
+    for model_name, tgt, paths in training_plan:
+        print(f"  {model_name} × {tgt:<12} → {len(paths)} data files")
     print(f"\n  Total models to train: {len(training_plan)}")
     print(f"{'='*70}\n")
 
