@@ -224,6 +224,7 @@ def train_scenario(
     seed:           int   = 42,
     subsample_ratio: float = 1.0,
     model_class     = None,
+    resume:         bool  = False,
 ) -> dict:
     """
     Train one model for a specific scenario × target.
@@ -284,11 +285,36 @@ def train_scenario(
     os.makedirs(ckpt_dir, exist_ok=True)
     best_ckpt = os.path.join(ckpt_dir, "best.pt")
 
-    # ── Training loop ─────────────────────────────────────────────────────── #
-    best_val   = float("inf")
-    best_state = None
-    no_improve = 0
-    history    = {"train": [], "val": []}
+    # ── Resume from checkpoint ─────────────────────────────────────────── #
+    start_epoch = 1
+    best_val    = float("inf")
+    best_state  = None
+    no_improve  = 0
+    history     = {"train": [], "val": []}
+
+    if resume:
+        # Find the latest epoch checkpoint in ckpt_dir
+        import glob as _glob
+        epoch_ckpts = sorted(_glob.glob(os.path.join(ckpt_dir, "epoch_*.pt")))
+        if epoch_ckpts:
+            latest_ckpt = epoch_ckpts[-1]
+            print(f"[{label}] ★ Resuming from: {os.path.basename(latest_ckpt)}")
+            ckpt_data = torch.load(latest_ckpt, map_location=device, weights_only=False)
+            model.load_state_dict(ckpt_data["model"])
+            optimizer.load_state_dict(ckpt_data["optimizer"])
+            if "scheduler" in ckpt_data:
+                scheduler.load_state_dict(ckpt_data["scheduler"])
+            start_epoch = ckpt_data.get("epoch", 0) + 1
+            best_val    = ckpt_data.get("best_val", float("inf"))
+            history     = ckpt_data.get("history", {"train": [], "val": []})
+            no_improve  = ckpt_data.get("no_improve", 0)
+            # Also load best_state from best.pt if it exists
+            if os.path.isfile(best_ckpt):
+                best_data  = torch.load(best_ckpt, map_location="cpu", weights_only=False)
+                best_state = best_data["model"]
+            print(f"[{label}]   → Resuming at epoch {start_epoch}, best_val={best_val:.4f}, patience_counter={no_improve}")
+        else:
+            print(f"[{label}] No checkpoint found in {ckpt_dir}, starting from scratch.")
 
     unit = "ms" if target == "delay" else "kbps"
     scale = 1000.0 if target == "delay" else 1e-3  # s→ms, bps→kbps
@@ -296,7 +322,7 @@ def train_scenario(
     print(f"\n[{label}] {'Epoch':>6}  {'Train Loss':>12}  {'Val Loss':>10}  {f'Val MAE ({unit})':>12}  {'Train MAPE':>12}  {'Val MAPE':>10}  {'Best?':>5}  {'LR':>10}  {'Time':>7}")
     print(f"[{label}] " + "-" * 107)
 
-    epoch_bar = tqdm(range(1, epochs + 1), desc=f"[{label}]", unit="ep", dynamic_ncols=True)
+    epoch_bar = tqdm(range(start_epoch, epochs + 1), desc=f"[{label}]", unit="ep", dynamic_ncols=True)
 
     for epoch in epoch_bar:
         t0 = time.time()
@@ -325,19 +351,7 @@ def train_scenario(
         history["train"].append(train_mape)
         history["val"].append(val_mape)
 
-        # ── Save epoch checkpoint ──────────────────────────────────────────── #
-        epoch_ckpt = os.path.join(ckpt_dir, f"epoch_{epoch:03d}_mape_{val_mape:.4f}.pt")
-        torch.save({
-            "epoch":       epoch,
-            "scenario":    scenario_id,
-            "target":      target,
-            "model":       model.state_dict(),
-            "optimizer":   optimizer.state_dict(),
-            "train_mape":  train_mape,
-            "val_mape":    val_mape,
-        }, epoch_ckpt)
-
-        # ── Print epoch summary ────────────────────────────────────────────── #
+        # ── Track best ─────────────────────────────────────────────────────── #
         is_best = val_loss < best_val
         if is_best:
             best_val   = val_loss
@@ -351,10 +365,26 @@ def train_scenario(
                 "epoch":      epoch,
                 "hidden_dim": hidden_dim,
                 "num_heads":  num_heads,
-                                 "iterations": iterations,
+                "iterations": iterations,
             }, best_ckpt)
         else:
             no_improve += 1
+
+        # ── Save epoch checkpoint (after best_val update for correct resume) ── #
+        epoch_ckpt = os.path.join(ckpt_dir, f"epoch_{epoch:03d}_mape_{val_mape:.4f}.pt")
+        torch.save({
+            "epoch":       epoch,
+            "scenario":    scenario_id,
+            "target":      target,
+            "model":       model.state_dict(),
+            "optimizer":   optimizer.state_dict(),
+            "scheduler":   scheduler.state_dict(),
+            "train_mape":  train_mape,
+            "val_mape":    val_mape,
+            "best_val":    best_val,
+            "no_improve":  no_improve,
+            "history":     history,
+        }, epoch_ckpt)
 
         marker = "  ★  " if is_best else "     "
         tqdm.write(
@@ -580,6 +610,8 @@ Examples:
                         help="Skip data validation during discovery (faster)")
     parser.add_argument("--recache", action="store_true",
                         help="Force re-scanning of scenarios and overwrite cache file")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume training from the latest checkpoint if one exists")
 
     args = parser.parse_args()
 
@@ -682,6 +714,7 @@ Examples:
                 seed          = args.seed,
                 subsample_ratio=args.subsample,
                 model_class   = model_cls,
+                resume        = args.resume,
             )
 
             # ── Plots ────────────────────────────────────────────────────── #
