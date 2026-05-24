@@ -22,7 +22,7 @@ from wireless_gnn.scenario_registry import discover_scenarios, filter_for_target
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Universal Delay model across all scenarios and policies.")
-    parser.add_argument("--data-dir", default="Data", help="Data directory (e.g. Data)")
+    parser.add_argument("--data-dir", default="data", help="Data directory (e.g. Data)")
     parser.add_argument("--checkpoint-path", default=os.path.join("wireless_gnn", "checkpoints", "delay", "best.pt"), help="Path to universal delay checkpoint")
     args = parser.parse_args()
 
