@@ -108,10 +108,10 @@ def main():
                 res_entry = {
                     "Scenario": sc_id,
                     "Policy": policy,
-                    "MAE": metrics["MAE"],
-                    "RMSE": metrics["RMSE"],
-                    "MAPE": metrics["MAPE (%)"],
-                    "R2": metrics["R²"]
+                    "MAE": float(metrics["MAE"]),
+                    "RMSE": float(metrics["RMSE"]),
+                    "MAPE": float(metrics["MAPE (%)"]),
+                    "R2": float(metrics["R²"])
                 }
                 results.append(res_entry)
                 
