@@ -111,14 +111,23 @@ def load_model_from_checkpoint(ckpt_path: str, device: torch.device):
     """Load a model from a best.pt checkpoint."""
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     
-    hidden_dim = ckpt.get("hidden_dim", 64)
-    num_heads  = ckpt.get("num_heads", 4)
-    iterations = ckpt.get("iterations", 8)
-    target     = ckpt.get("target", "delay")
-    model_type = ckpt.get("model_type", None)
+    # Handle older checkpoints that are just a raw state_dict
+    if "model" not in ckpt and not any(k in ckpt for k in ["hidden_dim", "num_heads", "iterations"]):
+        state_dict = ckpt
+        hidden_dim = 64
+        num_heads  = 4
+        iterations = 8
+        target     = "delay"
+        model_type = None
+    else:
+        hidden_dim = ckpt.get("hidden_dim", 64)
+        num_heads  = ckpt.get("num_heads", 4)
+        iterations = ckpt.get("iterations", 8)
+        target     = ckpt.get("target", "delay")
+        model_type = ckpt.get("model_type", None)
+        state_dict = ckpt.get("model", ckpt)
     
     # Detect model type from state_dict keys
-    state_dict = ckpt["model"]
     has_ffn = any("ffn" in k for k in state_dict.keys())
     
     if has_ffn or model_type == "v3":

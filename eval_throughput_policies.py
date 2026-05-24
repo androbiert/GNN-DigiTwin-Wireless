@@ -22,7 +22,7 @@ from wireless_gnn.scenario_registry import discover_scenarios, group_by_scenario
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate best model per scenario on each scheduling policy for throughput.")
-    parser.add_argument("--data-dir", default="Data_cleaned", help="Data directory (e.g. Data_cleaned)")
+    parser.add_argument("--data-dir", default="data_cleaned", help="Data directory (e.g. Data_cleaned)")
     parser.add_argument("--checkpoint-dir", default="checkpoints", help="Checkpoints directory")
     args = parser.parse_args()
 
