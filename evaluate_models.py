@@ -546,7 +546,7 @@ if __name__ == "__main__":
     
     print(f"\nFound {len(checkpoints)} model(s) to evaluate:")
     for k, v in checkpoints.items():
-        print(f"  {k:<30} → {v['path']}")
+        print(f"  {k:<30} -> {v['path']}")
     
     # Evaluate each model
     all_results = []

@@ -6,6 +6,16 @@ All configurations (power, scheduler, queue size) within a scenario
 are pooled together into one dataset.
 
 Usage:
+# Reprendre l'entraînement existant (il retrouve automatiquement le dernier epoch)
+python train_scenarios.py --data-dir Data_cleaned --scenario SC01 --target delay --resume --epochs 100
+
+# Avec split par politique + resume
+python train_scenarios.py --data-dir Data_cleaned --scenario SC01 --target delay --split-by-policy --resume --epochs 100
+
+# Avec le modèle v3 + resume
+python train_scenarios.py --data-dir Data_cleaned --scenario SC01 --target delay --model v3 --resume --epochs 100 --checkpoint-dir checkpoints_v3
+
+
   # Discover all scenarios (dry run)
   python train_scenarios.py --dry-run
 

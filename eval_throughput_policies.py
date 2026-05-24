@@ -1,0 +1,136 @@
+import sys
+import os
+import argparse
+import glob
+import json
+import torch
+import numpy as np
+from collections import defaultdict
+from torch.utils.data import DataLoader
+
+_project_root = os.path.dirname(os.path.abspath(__file__))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from evaluate_models import (
+    load_model_from_checkpoint, 
+    compute_metrics, 
+    predict_with_timing
+)
+from wireless_gnn.dataset import build_scenario_datasets, collate_fn
+from wireless_gnn.scenario_registry import discover_scenarios, group_by_scenario, filter_for_target
+
+def main():
+    parser = argparse.ArgumentParser(description="Evaluate best model per scenario on each scheduling policy for throughput.")
+    parser.add_argument("--data-dir", default="Data_cleaned", help="Data directory (e.g. Data_cleaned)")
+    parser.add_argument("--checkpoint-dir", default="checkpoints", help="Checkpoints directory")
+    args = parser.parse_args()
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}")
+
+    # Discover scenarios and configs
+    print("Discovering scenarios...")
+    all_configs = discover_scenarios(_project_root, data_dir=args.data_dir, validate=True, verbose=False)
+    groups = group_by_scenario(all_configs)
+
+    results = []
+
+    # Iterate through all scenario groups (SC01, SC02, etc.)
+    for sc_id, cfgs in groups.items():
+        # Find throughput configs
+        tgt_cfgs = filter_for_target(cfgs, "throughput")
+        if not tgt_cfgs:
+            continue
+
+        # Check if we have a general model checkpoint for this scenario
+        ckpt_path = os.path.join(args.checkpoint_dir, sc_id, "throughput", "best.pt")
+        if not os.path.exists(ckpt_path):
+            print(f"No checkpoint found for {sc_id}/throughput at {ckpt_path}")
+            continue
+
+        print(f"\n{'='*70}")
+        print(f"Evaluating General Model for {sc_id} (Throughput)")
+        print(f"{'='*70}")
+
+        # Load the general model
+        model, arch_name, ckpt = load_model_from_checkpoint(ckpt_path, device)
+        model.eval()
+
+        # Build the full dataset to get the exact same normalizer and test split as training
+        data_paths = [c.data_path for c in tgt_cfgs]
+        print(f"[{sc_id}] Building full dataset from {len(data_paths)} configs to get general normalizer & test split...")
+        _, _, full_test_ds, normalizer = build_scenario_datasets(
+            data_paths=data_paths,
+            scenario_id=sc_id,
+            target="throughput",
+            seed=42
+        )
+
+        # Now group the configs by scheduling policy
+        policy_folders = defaultdict(set)
+        for c in tgt_cfgs:
+            policy_folders[c.scheduler].add(c.folder_name)
+
+        # Evaluate on each policy
+        for policy, folders in policy_folders.items():
+            # Filter the test dataset for this policy
+            # Note: test_ds is a WirelessDataset, its underlying list is test_ds.graphs
+            policy_graphs = [g for g in full_test_ds.graphs if g["config_folder"] in folders]
+            
+            if not policy_graphs:
+                print(f"  [{policy}] No test graphs found.")
+                continue
+
+            print(f"  [{policy}] Test graphs: {len(policy_graphs)}")
+            
+            # Predict
+            all_pred = []
+            all_true = []
+            
+            # We must use normalizer.normalize(g) manually or wrap in a temporary WirelessDataset
+            from wireless_gnn.dataset import WirelessDataset
+            pol_test_ds = WirelessDataset(policy_graphs, normalizer=normalizer)
+            loader = DataLoader(pol_test_ds, batch_size=64, shuffle=False, collate_fn=collate_fn)
+
+            with torch.no_grad():
+                for batch in loader:
+                    for graph in batch:
+                        pred_phys, true_phys, _, _ = predict_with_timing(model, graph, normalizer, device)
+                        all_pred.append(pred_phys)
+                        all_true.append(true_phys)
+            
+            if all_pred:
+                pred = np.concatenate(all_pred)
+                true = np.concatenate(all_true)
+                metrics = compute_metrics(pred, true)
+                
+                res_entry = {
+                    "Scenario": sc_id,
+                    "Policy": policy,
+                    "MAE": metrics["MAE"],
+                    "RMSE": metrics["RMSE"],
+                    "MAPE": metrics["MAPE (%)"],
+                    "R2": metrics["R²"]
+                }
+                results.append(res_entry)
+                
+                scale = 1e-3
+                print(f"    -> MAE: {metrics['MAE'] * scale:.2f} kbps | RMSE: {metrics['RMSE'] * scale:.2f} kbps | MAPE: {metrics['MAPE (%)']:.2f}% | R²: {metrics['R²']:.4f}")
+
+    print(f"\n{'='*70}")
+    print(f"FINAL SUMMARY - Throughput Evaluation Across Policies")
+    print(f"{'='*70}")
+    print(f"{'Scenario':<10} {'Policy':<12} {'MAE (kbps)':>12} {'RMSE (kbps)':>12} {'MAPE (%)':>10} {'R²':>10}")
+    print("-" * 70)
+    for r in results:
+        print(f"{r['Scenario']:<10} {r['Policy']:<12} {r['MAE']*1e-3:>12.2f} {r['RMSE']*1e-3:>12.2f} {r['MAPE']:>10.2f} {r['R2']:>10.4f}")
+    
+    # Save results to JSON
+    out_file = "evaluation_throughput_policies.json"
+    with open(out_file, "w") as f:
+        json.dump(results, f, indent=4)
+    print(f"\nResults saved to {out_file}")
+
+if __name__ == "__main__":
+    main()
