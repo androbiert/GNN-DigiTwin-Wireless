@@ -94,6 +94,7 @@ def process_graph(
     graph:      dict,
     device:     torch.device,
     normalizer: FeatureNormalizer,
+    delay_loss: str = 'log_huber'
 ) -> Tuple[torch.Tensor, float, float]:
     pred, _ = model(graph)
 
@@ -109,15 +110,19 @@ def process_graph(
         # Model predicts in log-space (normalizer stores log1p stats)
         pred_log = pred * std + mean           # log1p(delay) scale
         true_log = torch.log1p(true_raw)       # log1p(raw delay)
+        
+        pred_phys = torch.clamp(torch.expm1(pred_log), min=0.0)
 
-        # Training loss: Huber in log-space (scale-invariant)
-        loss = log_huber_loss(pred_log, true_log)
+        if delay_loss == 'physical_mape':
+            loss = mape_loss(pred_phys, true_raw)
+        else:
+            # Training loss: Huber in log-space (scale-invariant)
+            loss = log_huber_loss(pred_log, true_log)
 
-        # metric = log-Huber loss (what the model optimizes)
+        # metric = the loss being optimized
         metric = loss.item()
 
         # Calculate MAE in physical space for display
-        pred_phys = torch.clamp(torch.expm1(pred_log), min=0.0)
         mae = mae_metric(pred_phys, true_raw)
 
     else:
@@ -146,6 +151,7 @@ def run_epoch(
     optimizer:  Optional[torch.optim.Optimizer] = None,
     desc:       str = "",
     scaler:     Optional[GradScaler] = None,
+    delay_loss: str = 'log_huber'
 ) -> Tuple[float, float, float]:
     training = optimizer is not None
     model.train(training)
@@ -167,7 +173,7 @@ def run_epoch(
                     amp_ctx = torch.amp.autocast(device.type, enabled=use_cuda) \
                               if _use_modern_amp else autocast(enabled=use_cuda)
                     with amp_ctx:
-                        loss, mape, mae = process_graph(model, graph, device, normalizer)
+                        loss, mape, mae = process_graph(model, graph, device, normalizer, delay_loss=delay_loss)
                 except Exception as e:
                     tqdm.write(f"  [WARN] skipping bad graph: {e}")
                     continue
@@ -220,6 +226,7 @@ def train_scenario_queue(
     subsample_ratio: float = 1.0,
     model_class     = None,
     resume:         bool  = False,
+    delay_loss:     str   = 'log_huber',
 ) -> dict:
     """
     Train one model for a specific scenario × queue_size × target.
@@ -325,11 +332,11 @@ def train_scenario_queue(
 
         train_loss, train_mape, train_mae = run_epoch(
             model, train_loader, device, normalizer, optimizer,
-            desc=f"  train ep{epoch:03d}", scaler=scaler
+            desc=f"  train ep{epoch:03d}", scaler=scaler, delay_loss=delay_loss
         )
         val_loss, val_mape, val_mae = run_epoch(
             model, val_loader,   device, normalizer,
-            desc=f"  val   ep{epoch:03d}", scaler=scaler
+            desc=f"  val   ep{epoch:03d}", scaler=scaler, delay_loss=delay_loss
         )
 
         if epoch == 1:
@@ -412,7 +419,7 @@ def train_scenario_queue(
     model.load_state_dict(best_state)
     test_loss, test_mape, test_mae = run_epoch(
         model, test_loader, device, normalizer,
-        desc="  test", scaler=scaler
+        desc="  test", scaler=scaler, delay_loss=delay_loss
     )
 
     print(f"\n{'='*60}")
@@ -651,6 +658,8 @@ Examples:
                         help="Force re-scanning of scenarios and overwrite cache file")
     parser.add_argument("--resume", action="store_true",
                         help="Resume training from the latest checkpoint if one exists")
+    parser.add_argument("--delay-loss", default="log_huber", choices=["log_huber", "physical_mape"],
+                        help="Loss function to use for delay target (default: log_huber)")
 
     args = parser.parse_args()
 
@@ -757,6 +766,7 @@ Examples:
                 subsample_ratio=args.subsample,
                 model_class   = model_cls,
                 resume        = args.resume,
+                delay_loss    = args.delay_loss,
             )
 
             # ── Plots ────────────────────────────────────────────────────── #
