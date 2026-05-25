@@ -129,10 +129,12 @@ def process_graph(
         # Training loss: Huber in log-space (scale-invariant)
         loss = log_huber_loss(pred_log, true_log)
 
-        # Calculate MAE and MAPE in physical space for display
+        # metric = log-Huber loss (what the model optimizes)
+        metric = loss.item()
+        
+        # Calculate MAE in physical space for display
         pred_phys = torch.clamp(torch.expm1(pred_log), min=0.0)
         mae = mae_metric(pred_phys, true_raw)
-        metric = mape_loss(pred_phys, true_raw).item()
 
     else:
         mean = torch.tensor(normalizer.tput_mean, device=device, dtype=torch.float32)
@@ -327,7 +329,8 @@ def train_scenario(
     unit = "ms" if target == "delay" else "kbps"
     scale = 1000.0 if target == "delay" else 1e-3  # s→ms, bps→kbps
 
-    print(f"\n[{label}] {'Epoch':>6}  {'Train Loss':>12}  {'Val Loss':>10}  {f'Val MAE ({unit})':>12}  {'Train MAPE':>12}  {'Val MAPE':>10}  {'Best?':>5}  {'LR':>10}  {'Time':>7}")
+    loss_label = "Log-Huber" if target == "delay" else "MAPE"
+    print(f"\n[{label}] {'Epoch':>6}  {'Train Loss':>12}  {'Val Loss':>10}  {f'Val MAE ({unit})':>12}  {f'Train {loss_label}':>12}  {f'Val {loss_label}':>10}  {'Best?':>5}  {'LR':>10}  {'Time':>7}")
     print(f"[{label}] " + "-" * 107)
 
     epoch_bar = tqdm(range(start_epoch, epochs + 1), desc=f"[{label}]", unit="ep", dynamic_ncols=True)
@@ -395,15 +398,24 @@ def train_scenario(
         }, epoch_ckpt)
 
         marker = "  ★  " if is_best else "     "
-        tqdm.write(
-            f"[{label}] {epoch:6d}  {train_loss:12.4f}  {val_loss:10.4f}  {val_mae * scale:12.4f}  "
-            f"{train_mape*100:11.2f}%  {val_mape*100:9.2f}%  {marker}  {cur_lr:10.2e}  {elapsed:6.1f}s"
-        )
-
-        epoch_bar.set_postfix(
-            train=f"{train_mape:.4%}", val=f"{val_mape:.4%}",
-            best=f"{best_val:.4%}", s=f"{elapsed:.1f}s"
-        )
+        if target == "delay":
+            tqdm.write(
+                f"[{label}] {epoch:6d}  {train_loss:12.4f}  {val_loss:10.4f}  {val_mae * scale:12.4f}  "
+                f"{train_mape:12.4f}  {val_mape:10.4f}  {marker}  {cur_lr:10.2e}  {elapsed:6.1f}s"
+            )
+            epoch_bar.set_postfix(
+                train=f"{train_mape:.4f}", val=f"{val_mape:.4f}",
+                best=f"{best_val:.4f}", s=f"{elapsed:.1f}s"
+            )
+        else:
+            tqdm.write(
+                f"[{label}] {epoch:6d}  {train_loss:12.4f}  {val_loss:10.4f}  {val_mae * scale:12.4f}  "
+                f"{train_mape*100:11.2f}%  {val_mape*100:9.2f}%  {marker}  {cur_lr:10.2e}  {elapsed:6.1f}s"
+            )
+            epoch_bar.set_postfix(
+                train=f"{train_mape:.4%}", val=f"{val_mape:.4%}",
+                best=f"{best_val:.4%}", s=f"{elapsed:.1f}s"
+            )
 
         if no_improve >= patience:
             tqdm.write(f"\n[{label}] Early stop at epoch {epoch} (patience={patience})")
@@ -418,7 +430,10 @@ def train_scenario(
 
     print(f"\n{'='*60}")
     print(f"[{label}] TEST RESULTS")
-    print(f"  MAPE:               {test_mape:.4%}")
+    if target == "delay":
+        print(f"  Log-Huber Loss:     {test_mape:.4f}")
+    else:
+        print(f"  MAPE:               {test_mape:.4%}")
     print(f"  MAE:                {test_mae * scale:.4f} {unit}")
     print(f"  Best val loss:      {best_val:.4f}")
     print(f"  Checkpoint:         {best_ckpt}")
@@ -431,6 +446,7 @@ def train_scenario(
         "normalizer": normalizer,
         "history":    history,
         "test_mape":  test_mape,
+        "test_mae":   test_mae,
         "best_val":   best_val,
         "ckpt_dir":   ckpt_dir,
         "train_ds":   train_ds,
@@ -535,20 +551,46 @@ def plot_scatter(results_list: list, scenario_id: str, target: str,
 
 def print_results_table(all_results: List[dict]):
     """Print a summary table comparing all trained models."""
-    print(f"\n{'='*70}")
-    print(f"  TRAINING RESULTS SUMMARY")
-    print(f"{'='*70}")
-    print(f"  {'Scenario':<10} {'Target':<12} {'Train MAPE':>12} {'Val MAPE':>12} {'Test MAPE':>12}")
-    print(f"  {'-'*58}")
+    delay_results = [r for r in all_results if r["target"] == "delay"]
+    tput_results  = [r for r in all_results if r["target"] == "throughput"]
 
-    for r in sorted(all_results, key=lambda x: (x["scenario"], x["target"])):
-        train_final = r["history"]["train"][-1] if r["history"]["train"] else 0
-        print(
-            f"  {r['scenario']:<10} {r['target']:<12} "
-            f"{train_final:>12.4%} {r['best_val']:>12.4%} {r['test_mape']:>12.4%}"
-        )
+    if delay_results:
+        unit = "ms"
+        scale = 1000.0
+        print(f"\n{'='*100}")
+        print(f"  TRAINING RESULTS SUMMARY — DELAY")
+        print(f"  Loss = Log-Huber (what the model optimizes)  |  MAE = physical error in {unit}")
+        print(f"{'='*100}")
+        print(f"  {'Scenario':<10} {'Train Loss':>12} {'Val Loss':>12} {'Test Loss':>12} {'Test MAE':>12}")
+        print(f"  {'-'*58}")
+        for r in sorted(delay_results, key=lambda x: x["scenario"]):
+            train_final = r["history"]["train"][-1] if r["history"]["train"] else 0
+            test_mae_val = r.get("test_mae", 0) * scale
+            print(
+                f"  {r['scenario']:<10} "
+                f"{train_final:>12.4f} {r['best_val']:>12.4f} {r['test_mape']:>12.4f} "
+                f"{test_mae_val:>10.2f}{unit}"
+            )
+        print(f"{'='*100}")
 
-    print(f"{'='*70}\n")
+    if tput_results:
+        unit = "kbps"
+        scale = 1e-3
+        print(f"\n{'='*100}")
+        print(f"  TRAINING RESULTS SUMMARY — THROUGHPUT")
+        print(f"{'='*100}")
+        print(f"  {'Scenario':<10} {'Train MAPE':>12} {'Val MAPE':>12} {'Test MAPE':>12} {'Test MAE':>12}")
+        print(f"  {'-'*58}")
+        for r in sorted(tput_results, key=lambda x: x["scenario"]):
+            train_final = r["history"]["train"][-1] if r["history"]["train"] else 0
+            test_mae_val = r.get("test_mae", 0) * scale
+            print(
+                f"  {r['scenario']:<10} "
+                f"{train_final:>12.4%} {r['best_val']:>12.4%} {r['test_mape']:>12.4%} "
+                f"{test_mae_val:>10.2f}{unit}"
+            )
+        print(f"{'='*100}")
+    print()
 
 
 def save_results_json(all_results: List[dict], save_path: str):
