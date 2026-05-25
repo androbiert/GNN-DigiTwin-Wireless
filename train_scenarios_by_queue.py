@@ -636,7 +636,7 @@ Examples:
                         help="Model architecture: 'v2' (original) or 'v3' (enhanced with LayerNorm+FFN+GELU)")
     parser.add_argument("--root", default=".",
                         help="Project root directory")
-    parser.add_argument("--data-dir", default="Data_cleaned",
+    parser.add_argument("--data-dir", default="data_cleaned",
                         help="Data subdirectory name")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--hidden-dim", type=int, default=64)
