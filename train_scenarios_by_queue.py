@@ -151,7 +151,8 @@ def run_epoch(
     optimizer:  Optional[torch.optim.Optimizer] = None,
     desc:       str = "",
     scaler:     Optional[GradScaler] = None,
-    delay_loss: str = 'log_huber'
+    delay_loss: str = 'log_huber',
+    target:     str = 'delay'
 ) -> Tuple[float, float, float]:
     training = optimizer is not None
     model.train(training)
@@ -195,9 +196,10 @@ def run_epoch(
                 total_mae  += mae
                 n          += 1
             mae_display = total_mae / max(n, 1) * scale
+            metric_label = "mape" if target == "throughput" else "log_huber"
             pbar.set_postfix(loss=f"{total_loss/max(n,1):.4f}",
                              mae=f"{mae_display:.1f}{unit}",
-                             mape=f"{total_mape/max(n,1):.4f}")
+                             **{metric_label: f"{total_mape/max(n,1):.4f}"})
 
     return total_loss / max(n, 1), total_mape / max(n, 1), total_mae / max(n, 1)
 
@@ -332,11 +334,11 @@ def train_scenario_queue(
 
         train_loss, train_mape, train_mae = run_epoch(
             model, train_loader, device, normalizer, optimizer,
-            desc=f"  train ep{epoch:03d}", scaler=scaler, delay_loss=delay_loss
+            desc=f"  train ep{epoch:03d}", scaler=scaler, delay_loss=delay_loss, target=target
         )
         val_loss, val_mape, val_mae = run_epoch(
             model, val_loader,   device, normalizer,
-            desc=f"  val   ep{epoch:03d}", scaler=scaler, delay_loss=delay_loss
+            desc=f"  val   ep{epoch:03d}", scaler=scaler, delay_loss=delay_loss, target=target
         )
 
         if epoch == 1:
@@ -419,7 +421,7 @@ def train_scenario_queue(
     model.load_state_dict(best_state)
     test_loss, test_mape, test_mae = run_epoch(
         model, test_loader, device, normalizer,
-        desc="  test", scaler=scaler, delay_loss=delay_loss
+        desc="  test", scaler=scaler, delay_loss=delay_loss, target=target
     )
 
     print(f"\n{'='*60}")
