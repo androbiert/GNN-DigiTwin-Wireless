@@ -70,16 +70,23 @@ def main():
             model, arch_name, ckpt = load_model_from_checkpoint(ckpt_path, device)
             model.eval()
 
-            # Build the specific dataset for this combination to get the EXACT normalizer and test split used during training
+            # Build the specific dataset for this combination to get the test split
             data_paths = [c.data_path for c in q_cfgs]
-            print(f"[{model_name}] Building dataset from {len(data_paths)} configs to get specific normalizer & test split...")
+            print(f"[{model_name}] Building dataset from {len(data_paths)} configs to get test split...")
             _, _, test_ds, normalizer = build_scenario_datasets(
                 data_paths=data_paths,
                 scenario_id=model_name,
                 target="delay",
                 seed=42,
-                subsample_ratio=0.2  # Must match the training script's default!
+                subsample_ratio=0.2  # Needs to match to get the correct test subset
             )
+
+            # Check if normalizer is in the checkpoint
+            if "normalizer" in ckpt:
+                print(f"  [{model_name}] Loading normalizer stats from checkpoint.")
+                normalizer.load_state(ckpt["normalizer"])
+            else:
+                print(f"  [{model_name}] Normalizer not in checkpoint, relying on dynamically built normalizer (WARNING: fragile!)")
 
             if len(test_ds) == 0:
                 print(f"  [{model_name}] No test graphs found.")

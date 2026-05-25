@@ -77,6 +77,31 @@ class FeatureNormalizer:
         g["target_throughput_norm"]= (graph["target_throughput"] - self.tput_mean)  / self.tput_std
         return g
 
+    def get_state(self) -> dict:
+        """Returns the normalizer stats as a dictionary for saving into a checkpoint."""
+        return {
+            "flow_mean": self.flow_mean, "flow_std": self.flow_std,
+            "queue_mean": self.queue_mean, "queue_std": self.queue_std,
+            "link_mean": self.link_mean, "link_std": self.link_std,
+            "delay_mean": self.delay_mean, "delay_std": self.delay_std,
+            "tput_mean": self.tput_mean, "tput_std": self.tput_std,
+            "fitted": self.fitted
+        }
+
+    def load_state(self, state: dict):
+        """Loads normalizer stats from a dictionary."""
+        self.flow_mean = state["flow_mean"]
+        self.flow_std = state["flow_std"]
+        self.queue_mean = state["queue_mean"]
+        self.queue_std = state["queue_std"]
+        self.link_mean = state["link_mean"]
+        self.link_std = state["link_std"]
+        self.delay_mean = state["delay_mean"]
+        self.delay_std = state["delay_std"]
+        self.tput_mean = state["tput_mean"]
+        self.tput_std = state["tput_std"]
+        self.fitted = state["fitted"]
+
 
 # --------------------------------------------------------------------------- #
 # Legacy file loading (backward compatible)

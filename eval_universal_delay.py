@@ -65,6 +65,13 @@ def main():
         seed=42
     )
 
+    # Check if normalizer is in the checkpoint
+    if "normalizer" in ckpt:
+        print(f"Loading normalizer stats from checkpoint.")
+        normalizer.load_state(ckpt["normalizer"])
+    else:
+        print(f"Normalizer not in checkpoint, relying on dynamically built normalizer (WARNING: fragile!)")
+
     # Group test graphs by Scenario and Policy
     folder_to_policy = {c.folder_name: c.scheduler for c in delay_cfgs}
     
