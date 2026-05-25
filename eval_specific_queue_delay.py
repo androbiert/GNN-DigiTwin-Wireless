@@ -77,7 +77,8 @@ def main():
                 data_paths=data_paths,
                 scenario_id=model_name,
                 target="delay",
-                seed=42
+                seed=42,
+                subsample_ratio=0.2  # Must match the training script's default!
             )
 
             if len(test_ds) == 0:
