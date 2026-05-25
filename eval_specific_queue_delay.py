@@ -21,7 +21,7 @@ from wireless_gnn.scenario_registry import discover_scenarios, group_by_scenario
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate specific Delay models for each scenario and queue_size combination.")
-    parser.add_argument("--data-dir", default="Data_cleaned", help="Data directory (e.g. Data_cleaned or Data)")
+    parser.add_argument("--data-dir", default="data_cleaned", help="Data directory (e.g. Data_cleaned or Data)")
     parser.add_argument("--checkpoint-dir", default="checkpoints_queue", help="Checkpoints directory containing SC01_50KiB, etc.")
     args = parser.parse_args()
 
