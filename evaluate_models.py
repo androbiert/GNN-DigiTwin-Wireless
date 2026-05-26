@@ -366,7 +366,7 @@ def find_best_checkpoints(checkpoint_dirs):
     return found
 
 
-def evaluate_model(model_key, info, data_dir, device, output_dir):
+def evaluate_model(model_key, info, data_dir, device, output_dir, recache=False):
     """Evaluate a single model on its test set."""
     print(f"\n{'='*70}")
     print(f"  EVALUATING: {model_key} ({info['target']})")
@@ -376,6 +376,8 @@ def evaluate_model(model_key, info, data_dir, device, output_dir):
     model, arch_name, ckpt = load_model_from_checkpoint(info["path"], device)
     target = info["target"]
     model_name = info["model_name"]
+    parts = model_name.split("_")
+    sc_id = parts[0]  # SC01
     
     n_params = sum(p.numel() for p in model.parameters())
     print(f"  Architecture:  {arch_name}")
@@ -386,13 +388,11 @@ def evaluate_model(model_key, info, data_dir, device, output_dir):
     
     # Discover data for this model
     root = os.path.dirname(os.path.abspath(__file__))
-    all_configs = discover_scenarios(root, data_dir=data_dir, validate=True, verbose=False)
+    all_configs = discover_scenarios(root, data_dir=data_dir, validate=True, verbose=False, use_cache=not recache, scenario_filter=sc_id)
     groups = group_by_scenario(all_configs)
     
     # Figure out which configs belong to this model
     # Model name could be SC01, SC01_PF, SC01_DRR, etc.
-    parts = model_name.split("_")
-    sc_id = parts[0]  # SC01
     policy = "_".join(parts[1:]) if len(parts) > 1 else None
     
     if sc_id not in groups:
@@ -559,6 +559,8 @@ if __name__ == "__main__":
                         help="Directory to save evaluation results and plots")
     parser.add_argument("--device", default="auto",
                         help="Device: 'auto', 'cpu', or 'cuda'")
+    parser.add_argument("--recache", action="store_true",
+                        help="Force re-scanning of scenarios and overwrite cache file")
     
     args = parser.parse_args()
     
@@ -592,7 +594,7 @@ if __name__ == "__main__":
     for model_key, info in checkpoints.items():
         try:
             result = evaluate_model(
-                model_key, info, args.data_dir, device, args.output_dir
+                model_key, info, args.data_dir, device, args.output_dir, recache=args.recache
             )
             if result:
                 all_results.append(result)
