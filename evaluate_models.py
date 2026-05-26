@@ -487,6 +487,19 @@ def evaluate_model(model_key, info, data_dir, device, output_dir, recache=False)
     print(f"  {'Avg Flows/Graph:':<22} {metrics['Avg Flows/Graph']:.1f}")
     print(f"  {'Total Test Flows:':<22} {metrics['n_samples']:,}")
     
+    print(f"\n  [Sample Comparison for {model_key}]")
+    num_samples_to_print = min(20, len(true))
+    sample_indices = np.random.choice(len(true), num_samples_to_print, replace=False)
+    print(f"  {'Index':<8} {f'GT ({unit})':>12} {f'Pred ({unit})':>12} {f'Abs Err ({unit})':>14} {'Rel Err (%)':>12}")
+    print("  " + "-"*62)
+    for idx in sample_indices:
+        gt_val = true[idx] * scale
+        pred_val = pred[idx] * scale
+        abs_err = abs(gt_val - pred_val)
+        rel_err = (abs_err / (abs(gt_val) + 1e-6)) * 100
+        print(f"  {idx:<8} {gt_val:>12.3f} {pred_val:>12.3f} {abs_err:>14.3f} {rel_err:>12.2f}%")
+    print("\n")
+    
     # Generate plots
     model_plot_dir = os.path.join(output_dir, model_key.replace("/", "_"))
     print(f"\n  Generating plots...")
