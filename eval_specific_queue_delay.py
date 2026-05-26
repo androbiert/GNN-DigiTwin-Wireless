@@ -31,7 +31,7 @@ def main():
     print(f"Device: {device}")
 
     print("Discovering scenarios...")
-    all_configs = discover_scenarios(_project_root, data_dir=args.data_dir, validate=True, verbose=False, use_cache=not args.recache)
+    all_configs = discover_scenarios(_project_root, data_dir=args.data_dir, validate=True, verbose=False, use_cache=not args.recache, scenario_filter=args.scenario)
     groups = group_by_scenario(all_configs)
 
     results = []

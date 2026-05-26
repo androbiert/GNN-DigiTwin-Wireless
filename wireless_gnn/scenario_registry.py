@@ -172,6 +172,7 @@ def discover_scenarios(
     validate:     bool = True,
     verbose:      bool = True,
     use_cache:    bool = True,
+    scenario_filter: Optional[str] = None,
 ) -> List[SimConfig]:
     """Discover all simulation configs under <project_root>/<data_dir>/SC*/simulations/.
 
@@ -261,7 +262,9 @@ def discover_scenarios(
                 folder_name = folder,
             )
 
-            if validate:
+            # Only validate if validate is True and (no filter is set or it matches the filter)
+            should_validate = validate and (scenario_filter is None or sc_dir.upper() == scenario_filter.upper())
+            if should_validate:
                 info = _validate_data(data_path)
                 cfg.n_snapshots    = info["n_snapshots"]
                 cfg.n_with_flows   = info["n_with_flows"]
