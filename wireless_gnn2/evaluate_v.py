@@ -60,7 +60,7 @@ def evaluate_model(args):
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
-    configs = discover_scenarios(args.data_dir)
+    configs = discover_scenarios(".", data_dir=args.data_dir)
     groups = group_by_scenario(configs)
     
     if args.scenario not in groups:

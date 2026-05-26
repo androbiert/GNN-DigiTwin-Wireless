@@ -19,9 +19,9 @@ def train_model(args):
     print(f"Using device: {device}")
     
     # 1. Discover data
-    configs = discover_scenarios(args.data_dir)
+    configs = discover_scenarios(".", data_dir=args.data_dir)
     groups = group_by_scenario(configs)
-    
+
     if args.scenario not in groups:
         raise ValueError(f"Scenario {args.scenario} not found. Available: {list(groups.keys())}")
         
