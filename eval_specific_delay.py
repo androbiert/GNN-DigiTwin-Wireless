@@ -109,15 +109,23 @@ def main():
                     "Scenario": sc_id,
                     "Policy": policy,
                     "MAE": float(metrics["MAE"]),
+                    "MedAE": float(metrics["Median AE"]),
                     "RMSE": float(metrics["RMSE"]),
                     "MAPE": float(metrics["MAPE (%)"]),
-                    "R2": float(metrics["R²"])
+                    "SMAPE": float(metrics["SMAPE (%)"]),
+                    "R2": float(metrics["R²"]),
+                    "Bucket_MAE": metrics["Bucket_MAE"]
                 }
                 results.append(res_entry)
                 
-                print(f"    -> MAE: {metrics['MAE'] * scale:.2f} ms | RMSE: {metrics['RMSE'] * scale:.2f} ms | MAPE: {metrics['MAPE (%)']:.2f}% | R²: {metrics['R²']:.4f}")
+                print(f"    -> MAE: {metrics['MAE'] * scale:.2f} ms | MedAE: {metrics['Median AE'] * scale:.2f} ms | RMSE: {metrics['RMSE'] * scale:.2f} ms | SMAPE: {metrics['SMAPE (%)']:.2f}% | R²: {metrics['R²']:.4f}")
                 
-                print(f"    [Sample Comparison for {model_name}]")
+                print(f"    [Bucket MAE]")
+                for b_name, b_val in metrics["Bucket_MAE"].items():
+                    val_str = f"{b_val * scale:.2f} ms" if not np.isnan(b_val) else "N/A"
+                    print(f"      {b_name:<10}: {val_str}")
+                
+                print(f"\n    [Sample Comparison for {model_name}]")
                 num_samples_to_print = min(30, len(true))
                 sample_indices = np.random.choice(len(true), num_samples_to_print, replace=False)
                 print(f"    {'Index':<8} {'GT (ms)':>12} {'Pred (ms)':>12} {'Abs Err (ms)':>14} {'Rel Err (%)':>12}")
@@ -131,13 +139,19 @@ def main():
                 print("\n")
 
     if results:
-        print(f"\n{'='*70}")
+        print(f"\n{'='*115}")
         print(f"FINAL SUMMARY - Specific Delay Models Evaluation")
-        print(f"{'='*70}")
-        print(f"{'Scenario':<10} {'Policy':<12} {'MAE (ms)':>12} {'RMSE (ms)':>12} {'MAPE (%)':>10} {'R²':>10}")
-        print("-" * 70)
+        print(f"{'='*115}")
+        print(f"{'Scenario':<10} {'Policy':<12} {'MAE':>8} {'MedAE':>8} {'RMSE':>8} {'SMAPE':>8} {'R²':>8} | {'0-100ms':>10} {'100-500ms':>10} {'500-2k ms':>10} {'>2000ms':>10}")
+        print("-" * 115)
         for r in results:
-            print(f"{r['Scenario']:<10} {r['Policy']:<12} {r['MAE']*1000.0:>12.2f} {r['RMSE']*1000.0:>12.2f} {r['MAPE']:>10.2f} {r['R2']:>10.4f}")
+            b = r["Bucket_MAE"]
+            b1 = f"{b['0-100ms']*1000:.1f}" if not np.isnan(b['0-100ms']) else "N/A"
+            b2 = f"{b['100-500ms']*1000:.1f}" if not np.isnan(b['100-500ms']) else "N/A"
+            b3 = f"{b['500-2000ms']*1000:.1f}" if not np.isnan(b['500-2000ms']) else "N/A"
+            b4 = f"{b['>2000ms']*1000:.1f}" if not np.isnan(b['>2000ms']) else "N/A"
+            
+            print(f"{r['Scenario']:<10} {r['Policy']:<12} {r['MAE']*1000.0:>8.1f} {r['MedAE']*1000.0:>8.1f} {r['RMSE']*1000.0:>8.1f} {r['SMAPE']:>8.1f}% {r['R2']:>8.4f} | {b1:>10} {b2:>10} {b3:>10} {b4:>10}")
         
         # Save results to JSON
         out_file = "evaluation_delay_specific_policies.json"
