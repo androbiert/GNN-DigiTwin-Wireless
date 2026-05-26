@@ -24,13 +24,14 @@ def main():
     parser.add_argument("--data-dir", default="data_cleaned", help="Data directory (e.g. Data_cleaned or Data)")
     parser.add_argument("--checkpoint-dir", default="checkpoints_queue", help="Checkpoints directory containing SC01_50KiB, etc.")
     parser.add_argument("--scenario", default=None, help="Scenario to evaluate (e.g., SC01 or SC03). Default: evaluate all available.")
+    parser.add_argument("--recache", action="store_true", help="Force re-scanning of scenarios and overwrite cache file")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
     print("Discovering scenarios...")
-    all_configs = discover_scenarios(_project_root, data_dir=args.data_dir, validate=True, verbose=False)
+    all_configs = discover_scenarios(_project_root, data_dir=args.data_dir, validate=True, verbose=False, use_cache=not args.recache)
     groups = group_by_scenario(all_configs)
 
     results = []
