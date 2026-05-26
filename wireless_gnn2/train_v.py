@@ -49,7 +49,9 @@ def train_model(args):
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False)
     
     # 3. Model
-    model = ModelV(input_dim=31, hidden_dim=args.hidden_dim, num_layers=args.num_layers, dropout=args.dropout)
+    input_dim = train_ds.X.shape[2]
+    print(f"Dynamically determined input dimension: {input_dim}")
+    model = ModelV(input_dim=input_dim, hidden_dim=args.hidden_dim, num_layers=args.num_layers, dropout=args.dropout)
     model.to(device)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)

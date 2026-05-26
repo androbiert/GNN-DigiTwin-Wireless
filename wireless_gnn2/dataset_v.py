@@ -31,28 +31,17 @@ class GlobalFeatureNormalizer:
             self.mean = np.array(state["mean"])
             self.std = np.array(state["std"])
 
-def extract_global_features(graph: dict) -> tuple:
+def extract_flow_features(g: dict, i: int) -> np.ndarray:
     """
-    Extract global average and max features for flow, queue, and link attributes.
-    Returns (feat_array, target_delay, target_throughput)
-    Input dim = 16 (flow) + 4 (queue) + 8 (link) + 3 (counts) = 31
+    Extract concatenated flow-specific features: flow, queue, and link.
+    Returns np.ndarray of shape [14] (8 flow + 2 queue + 4 link)
     """
-    def agg(arr):
-        if len(arr) == 0:
-            return np.zeros(arr.shape[1] * 2, dtype=np.float32)
-        return np.concatenate([np.mean(arr, axis=0), np.max(arr, axis=0)])
-
-    f_agg = agg(graph["flow_feat"])
-    q_agg = agg(graph["queue_feat"])
-    l_agg = agg(graph["link_feat"])
-    counts = np.array([graph["n_flows"], graph["n_queues"], graph["n_links"]], dtype=np.float32)
-    
-    feat = np.concatenate([f_agg, q_agg, l_agg, counts])
-    
-    td = np.mean(graph["target_delay"]) if graph["n_flows"] > 0 else 0.0
-    tt = np.mean(graph["target_throughput"]) if graph["n_flows"] > 0 else 0.0
-    
-    return feat, td, tt
+    f_feat = g["flow_feat"][i]
+    qi = g["flow_to_queue"][i]
+    q_feat = g["queue_feat"][qi]
+    li = g["queue_to_link"][qi]
+    l_feat = g["link_feat"][li]
+    return np.concatenate([f_feat, q_feat, l_feat])
 
 def load_temporal_scenarios(data_paths, seq_len=8):
     all_sequences_x = []
@@ -63,41 +52,63 @@ def load_temporal_scenarios(data_paths, seq_len=8):
         with open(path, "r") as f:
             data = json.load(f)
             
-        # extract sequentially
-        seq_x, seq_d, seq_t = [], [], []
-        for snap in data:
+        flow_history = {}
+        
+        for t, snap in enumerate(data):
             g = build_graph(snap)
-            if g is not None:
-                feat, td, tt = extract_global_features(g)
-                seq_x.append(feat)
-                seq_d.append(td)
-                seq_t.append(tt)
+            if g is None:
+                continue
                 
-        if len(seq_x) < seq_len:
-            continue
+            flows = snap.get("flows", [])
+            active_flows = [
+                f for f in flows
+                if (f.get("delay", 0) > 0 or f.get("throughput", 0) > 0)
+                and f.get("dst", "").startswith("ue")
+            ]
             
-        x = np.stack(seq_x)
-        d = np.array(seq_d)
-        t = np.array(seq_t)
-        
-        # Build windows (sliding window)
-        windows_x, windows_d, windows_t = [], [], []
-        for i in range(len(x) - seq_len + 1):
-            windows_x.append(x[i:i+seq_len])
-            # Target is the value at the LAST step of the window
-            windows_d.append(d[i+seq_len-1])
-            windows_t.append(t[i+seq_len-1])
-            
-        all_sequences_x.extend(windows_x)
-        all_sequences_y_d.extend(windows_d)
-        all_sequences_y_t.extend(windows_t)
-        
+            n_flows = g.get("n_flows", 0)
+            if n_flows == 0 or len(active_flows) != n_flows:
+                continue
+                
+            for i, f in enumerate(active_flows):
+                dst = f["dst"]
+                feat = extract_flow_features(g, i)
+                td = g["target_delay"][i]
+                tt = g["target_throughput"][i]
+                
+                if dst not in flow_history:
+                    flow_history[dst] = []
+                flow_history[dst].append((t, feat, td, tt))
+                
+        # Build sliding windows per individual flow (must be contiguous in time)
+        for dst, history in flow_history.items():
+            if len(history) < seq_len:
+                continue
+                
+            for i in range(len(history) - seq_len + 1):
+                window = history[i:i+seq_len]
+                t_start = window[0][0]
+                is_contiguous = True
+                for idx, (t_val, _, _, _) in enumerate(window):
+                    if t_val != t_start + idx:
+                        is_contiguous = False
+                        break
+                        
+                if is_contiguous:
+                    x_win = np.stack([item[1] for item in window])  # [seq_len, 14]
+                    y_d_val = window[-1][2]
+                    y_t_val = window[-1][3]
+                    
+                    all_sequences_x.append(x_win)
+                    all_sequences_y_d.append(y_d_val)
+                    all_sequences_y_t.append(y_t_val)
+                    
     if not all_sequences_x:
         return None, None, None
         
-    X = np.stack(all_sequences_x)  # [N, seq_len, dim]
-    Y_d = np.array(all_sequences_y_d) # [N]
-    Y_t = np.array(all_sequences_y_t) # [N]
+    X = np.stack(all_sequences_x)      # [N, seq_len, 14]
+    Y_d = np.array(all_sequences_y_d)   # [N]
+    Y_t = np.array(all_sequences_y_t)   # [N]
     
     return X, Y_d, Y_t
 

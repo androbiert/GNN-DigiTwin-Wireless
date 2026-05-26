@@ -89,7 +89,9 @@ def evaluate_model(args):
             
     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
     
-    model = ModelV(input_dim=31, hidden_dim=args.hidden_dim, num_layers=args.num_layers, dropout=0.0)
+    input_dim = test_ds.X.shape[2]
+    print(f"Dynamically determined input dimension: {input_dim}")
+    model = ModelV(input_dim=input_dim, hidden_dim=args.hidden_dim, num_layers=args.num_layers, dropout=0.0)
     
     ckpt_path = os.path.join(ckpt_dir, "best.pt")
     if not os.path.isfile(ckpt_path):
