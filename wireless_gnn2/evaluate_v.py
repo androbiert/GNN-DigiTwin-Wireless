@@ -149,8 +149,8 @@ def evaluate_model(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-dir", type=str, default="../Data_cleaned")
-    parser.add_argument("--checkpoint-dir", type=str, default="../checkpoints_model_v")
+    parser.add_argument("--data-dir", type=str, default="Data_cleaned")
+    parser.add_argument("--checkpoint-dir", type=str, default="checkpoints_model_v")
     parser.add_argument("--scenario", type=str, default="SC01")
     parser.add_argument("--queue-size", type=str, default=None)
     parser.add_argument("--target", type=str, default="delay")
@@ -161,8 +161,4 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cuda")
     
     args = parser.parse_args()
-    if not os.path.exists(args.data_dir) and os.path.exists(args.data_dir.replace("../", "")):
-        args.data_dir = args.data_dir.replace("../", "")
-    if not os.path.exists(args.checkpoint_dir) and os.path.exists(args.checkpoint_dir.replace("../", "")):
-        args.checkpoint_dir = args.checkpoint_dir.replace("../", "")
     evaluate_model(args)
