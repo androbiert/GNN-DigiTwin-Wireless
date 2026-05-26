@@ -492,7 +492,7 @@ def predict(model, graph, normalizer, device):
         key_pred, key_true = "delay_pred", "delay_true"
         true = np.asarray(graph["target_delay"])
         # Undo z-score then undo log1p to get physical delay
-        log_pred = torch.clamp(pred * std + mean, max=5.0)
+        log_pred = pred * std + mean
         pred_phys = torch.clamp(torch.expm1(log_pred), min=0.0).cpu().numpy()
     else:
         mean = torch.tensor(normalizer.tput_mean, device=device)

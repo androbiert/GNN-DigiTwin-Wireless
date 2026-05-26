@@ -178,7 +178,7 @@ def predict_with_timing(model, graph, normalizer, device):
         mean = torch.tensor(normalizer.delay_mean, device=device)
         std  = torch.tensor(normalizer.delay_std,  device=device)
         true = np.asarray(graph["target_delay"])
-        log_pred = torch.clamp(pred * std + mean, max=5.0)
+        log_pred = pred * std + mean
         pred_phys = torch.clamp(torch.expm1(log_pred), min=0.0).cpu().numpy()
     else:
         mean = torch.tensor(normalizer.tput_mean, device=device)
