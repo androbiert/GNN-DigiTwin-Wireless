@@ -23,6 +23,7 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate specific Delay models for each scenario and queue_size combination.")
     parser.add_argument("--data-dir", default="data_cleaned", help="Data directory (e.g. Data_cleaned or Data)")
     parser.add_argument("--checkpoint-dir", default="checkpoints_queue", help="Checkpoints directory containing SC01_50KiB, etc.")
+    parser.add_argument("--scenario", default=None, help="Scenario to evaluate (e.g., SC01 or SC03). Default: evaluate all available.")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -36,6 +37,8 @@ def main():
 
     # Iterate through all scenario groups (SC01, SC02, etc.)
     for sc_id, cfgs in groups.items():
+        if args.scenario and sc_id.upper() != args.scenario.upper():
+            continue
         delay_cfgs = filter_for_target(cfgs, "delay")
         if not delay_cfgs:
             continue
