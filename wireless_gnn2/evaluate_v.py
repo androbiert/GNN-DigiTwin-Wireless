@@ -149,7 +149,7 @@ def evaluate_model(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-dir", type=str, default="Data_cleaned")
+    parser.add_argument("--data-dir", type=str, default="data_cleaned")
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints_model_v")
     parser.add_argument("--scenario", type=str, default="SC01")
     parser.add_argument("--queue-size", type=str, default=None)
