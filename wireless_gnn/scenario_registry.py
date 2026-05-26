@@ -253,7 +253,7 @@ def discover_scenarios(
                 continue
 
             cfg = SimConfig(
-                scenario_id = parsed["sc"],
+                scenario_id = sc_dir,
                 tx_power    = parsed["power"],
                 scheduler   = parsed["sched"],
                 queue_size  = parsed["qsize"],
