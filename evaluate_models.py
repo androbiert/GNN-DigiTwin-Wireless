@@ -61,6 +61,10 @@ def compute_metrics(pred: np.ndarray, true: np.ndarray, eps: float = 1e-6) -> di
     denom = np.abs(true) + eps
     mape  = np.mean(abs_errors / denom) * 100
     
+    # SMAPE
+    smape_denom = (np.abs(true) + np.abs(pred)) / 2.0 + eps
+    smape = np.mean(abs_errors / smape_denom) * 100
+    
     # Median absolute error (robust to outliers)
     median_ae = np.median(abs_errors)
     
@@ -84,11 +88,27 @@ def compute_metrics(pred: np.ndarray, true: np.ndarray, eps: float = 1e-6) -> di
     # Max error
     max_err = np.max(abs_errors)
     
+    # MAE by delay buckets (assuming true is in seconds)
+    buckets = {
+        "0-100ms": (0.0, 0.1),
+        "100-500ms": (0.1, 0.5),
+        "500-2000ms": (0.5, 2.0),
+        ">2000ms": (2.0, float("inf"))
+    }
+    mae_buckets = {}
+    for name, (low, high) in buckets.items():
+        mask = (true >= low) & (true < high)
+        if np.any(mask):
+            mae_buckets[name] = np.mean(abs_errors[mask])
+        else:
+            mae_buckets[name] = float("nan")
+    
     return {
         "MAE":            mae,
         "MSE":            mse,
         "RMSE":           rmse,
         "MAPE (%)":       mape,
+        "SMAPE (%)":      smape,
         "Median AE":      median_ae,
         "R²":             r2,
         "P50 Error":      p50,
@@ -100,7 +120,9 @@ def compute_metrics(pred: np.ndarray, true: np.ndarray, eps: float = 1e-6) -> di
         "Acc@20%":        acc_20,
         "Acc@50%":        acc_50,
         "n_samples":      len(pred),
+        "Bucket_MAE":     mae_buckets,
     }
+
 
 
 # --------------------------------------------------------------------------- #
