@@ -394,7 +394,15 @@ def evaluate_model(model_key, info, data_dir, device, output_dir):
         scenario_id=model_name,
         target=target,
         seed=42,
+        split_dir=os.path.dirname(ckpt_path)
     )
+
+    if "normalizer" in ckpt_data:
+        print(f"  Loading normalizer stats from checkpoint.")
+        normalizer.load_state(ckpt_data["normalizer"])
+    else:
+        print(f"  Normalizer not in checkpoint, relying on dynamically built normalizer (WARNING: fragile!)")
+
     print(f"  Test samples:  {len(test_ds)}")
     
     # Run predictions

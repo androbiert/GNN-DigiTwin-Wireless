@@ -62,7 +62,8 @@ def main():
         data_paths=data_paths,
         scenario_id="ALL",
         target="delay",
-        seed=42
+        seed=42,
+        split_dir=os.path.dirname(ckpt_path)
     )
 
     # Check if normalizer is in the checkpoint

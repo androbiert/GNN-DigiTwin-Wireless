@@ -188,14 +188,13 @@ def load_all_snapshots(project_root: str) -> List[dict]:
 def load_scenario_snapshots(
     data_paths: List[str],
     scenario_id: str = "",
-    target: str = "delay",
-    filter_outliers: bool = True,
-    outlier_percentile: float = 95.0,
     verbose: bool = True,
-    subsample_ratio: float = 1.0,
 ) -> List[dict]:
     """
     Load all valid graph snapshots from a list of data.json paths.
+
+    No subsampling or outlier filtering is done here — those are handled
+    downstream in build_scenario_datasets to ensure proper train-only filtering.
 
     Parameters
     ----------
@@ -203,21 +202,13 @@ def load_scenario_snapshots(
         Absolute paths to data.json files.
     scenario_id : str
         Scenario identifier (e.g. "SC01") — stored as metadata on each graph.
-    target : str
-        "delay" or "throughput" — used for outlier filtering.
-    filter_outliers : bool
-        If True, remove snapshots with extreme target values.
-    outlier_percentile : float
-        Percentile threshold for outlier filtering.
     verbose : bool
         Print loading progress.
-    subsample_ratio : float
-        Ratio of snapshots to keep (e.g., 0.2 keeps 20%).
 
     Returns
     -------
     List[dict]
-        List of raw graph dicts (not yet normalised).
+        List of raw graph dicts (not yet normalised), in chronological order.
     """
     all_graphs = []
 
@@ -233,10 +224,6 @@ def load_scenario_snapshots(
             print(f"[dataset] WARNING: cannot read {fpath}: {e}")
             continue
 
-        if subsample_ratio < 1.0:
-            step = max(1, int(1.0 / subsample_ratio))
-            data = data[::step]
-
         n_valid = 0
         for snapshot in data:
             g = build_graph(snapshot)
@@ -250,36 +237,7 @@ def load_scenario_snapshots(
             print(f"[dataset]   -> {n_valid}/{len(data)} valid snapshots")
 
     if verbose:
-        print(f"[dataset] Total samples before filtering: {len(all_graphs)}")
-
-    # --- Outlier filtering ---
-    if filter_outliers and all_graphs:
-        if target == "delay":
-            all_targets = []
-            for g in all_graphs:
-                all_targets.extend(g["target_delay"])
-        else:
-            all_targets = []
-            for g in all_graphs:
-                all_targets.extend(g["target_throughput"])
-
-        if all_targets:
-            threshold = float(np.percentile(all_targets, outlier_percentile))
-            if verbose:
-                print(f"[dataset] {outlier_percentile}th percentile threshold: {threshold:.5f}")
-
-            before = len(all_graphs)
-            if target == "delay":
-                all_graphs = [g for g in all_graphs if max(g["target_delay"]) <= threshold]
-            else:
-                # For throughput, remove extreme high values
-                all_graphs = [g for g in all_graphs if max(g["target_throughput"]) <= threshold]
-
-            if verbose:
-                print(f"[dataset] Filtered out {before - len(all_graphs)} outlier snapshots.")
-
-    if verbose:
-        print(f"[dataset] Total samples after filtering: {len(all_graphs)}")
+        print(f"[dataset] Total graphs loaded: {len(all_graphs)}")
 
     return all_graphs
 
@@ -358,7 +316,7 @@ def build_datasets(
 
 
 # --------------------------------------------------------------------------- #
-# Build datasets — Scenario-aware  (NEW)
+# Build datasets — Scenario-aware  (NEW — reproducible random sampling)
 # --------------------------------------------------------------------------- #
 
 def build_scenario_datasets(
@@ -371,9 +329,17 @@ def build_scenario_datasets(
     filter_outliers:    bool  = True,
     outlier_percentile: float = 95.0,
     subsample_ratio:    float = 1.0,
+    split_dir:    Optional[str] = None,
 ) -> Tuple["WirelessDataset", "WirelessDataset", "WirelessDataset", FeatureNormalizer]:
     """
     Load snapshots from given data_paths, split, normalise.
+
+    If split_dir is provided:
+      - If split.json exists there, load exact indices from it.
+      - Otherwise, generate indices (random sampling + split) and save to split.json.
+
+    Outlier filtering is applied ONLY to training data.
+    Normalisation is fitted ONLY on (filtered) training data.
 
     Parameters
     ----------
@@ -387,20 +353,23 @@ def build_scenario_datasets(
         Split ratios.
     seed : int
         Random seed for reproducibility.
+    filter_outliers : bool
+        If True, remove outlier snapshots from training data only.
+    outlier_percentile : float
+        Percentile threshold for outlier filtering (computed on train data).
     subsample_ratio : float
-        Ratio of snapshots to keep (e.g., 0.2 keeps 20%).
+        Ratio of snapshots to keep (e.g., 0.2 keeps 20%). Random sampling.
+    split_dir : Optional[str]
+        Directory to save/load split.json. If None, splits are ephemeral.
 
     Returns
     -------
     (train_dataset, val_dataset, test_dataset, normalizer)
     """
+    # ── Load ALL graphs (no subsampling, no filtering) ────────────────── #
     all_graphs = load_scenario_snapshots(
         data_paths=data_paths,
         scenario_id=scenario_id,
-        target=target,
-        filter_outliers=filter_outliers,
-        outlier_percentile=outlier_percentile,
-        subsample_ratio=subsample_ratio,
     )
 
     if not all_graphs:
@@ -409,21 +378,125 @@ def build_scenario_datasets(
             f"Checked {len(data_paths)} data.json files."
         )
 
-    rng = np.random.default_rng(seed)
-    idx = rng.permutation(len(all_graphs))
+    n_total = len(all_graphs)
 
-    n_train = int(len(all_graphs) * train_ratio)
-    n_val   = int(len(all_graphs) * val_ratio)
+    # ── Check for existing split.json ─────────────────────────────────── #
+    split_file = os.path.join(split_dir, "split.json") if split_dir else None
+    loaded_from_file = False
 
-    train_idx = idx[:n_train]
-    val_idx   = idx[n_train:n_train + n_val]
-    test_idx  = idx[n_train + n_val:]
+    if split_file and os.path.isfile(split_file):
+        print(f"[dataset] Loading existing split from {split_file}")
+        with open(split_file, "r") as f:
+            split_meta = json.load(f)
 
-    train_graphs = [all_graphs[i] for i in train_idx]
+        # Validate that the split was built from the same data
+        if split_meta.get("n_total_graphs") != n_total:
+            print(f"[dataset] WARNING: split.json has n_total_graphs={split_meta.get('n_total_graphs')} "
+                  f"but current data has {n_total}. Regenerating split.")
+        else:
+            subset_idx       = split_meta["subset_idx"]
+            train_idx        = split_meta["train_idx"]
+            val_idx          = split_meta["val_idx"]
+            test_idx         = split_meta["test_idx"]
+            outlier_threshold = split_meta.get("outlier_threshold")
+            filtered_train_idx = split_meta.get("filtered_train_idx")
+            loaded_from_file = True
+            print(f"[dataset] Split loaded: subset={len(subset_idx)}, "
+                  f"train={len(filtered_train_idx) if filtered_train_idx is not None else len(train_idx)}, "
+                  f"val={len(val_idx)}, test={len(test_idx)}")
+
+    # ── Generate new split if needed ──────────────────────────────────── #
+    if not loaded_from_file:
+        rng = np.random.default_rng(seed)
+
+        # Random snapshot sampling (replacing deterministic data[::step])
+        if subsample_ratio < 1.0:
+            n_keep = max(1, int(n_total * subsample_ratio))
+            subset_idx = sorted(rng.choice(n_total, size=n_keep, replace=False).tolist())
+        else:
+            subset_idx = list(range(n_total))
+
+        n_subset = len(subset_idx)
+        print(f"[dataset] Random sampling: kept {n_subset}/{n_total} snapshots "
+              f"(ratio={subsample_ratio}, seed={seed})")
+
+        # Random shuffle of sampled indices, then split
+        shuffled = rng.permutation(n_subset)
+
+        n_train = int(n_subset * train_ratio)
+        n_val   = int(n_subset * val_ratio)
+
+        # Map back to global indices
+        train_idx = sorted([subset_idx[i] for i in shuffled[:n_train]])
+        val_idx   = sorted([subset_idx[i] for i in shuffled[n_train:n_train + n_val]])
+        test_idx  = sorted([subset_idx[i] for i in shuffled[n_train + n_val:]])
+
+        # ── Outlier filtering on TRAIN ONLY ──────────────────────────── #
+        outlier_threshold = None
+        filtered_train_idx = None
+
+        if filter_outliers:
+            train_graphs_raw = [all_graphs[i] for i in train_idx]
+            if target == "delay":
+                all_targets = []
+                for g in train_graphs_raw:
+                    all_targets.extend(g["target_delay"])
+            else:
+                all_targets = []
+                for g in train_graphs_raw:
+                    all_targets.extend(g["target_throughput"])
+
+            if all_targets:
+                outlier_threshold = float(np.percentile(all_targets, outlier_percentile))
+                print(f"[dataset] Outlier threshold ({outlier_percentile}th pctl, train-only): "
+                      f"{outlier_threshold:.5f}")
+
+                before = len(train_idx)
+                if target == "delay":
+                    filtered_train_idx = [i for i in train_idx
+                                          if max(all_graphs[i]["target_delay"]) <= outlier_threshold]
+                else:
+                    filtered_train_idx = [i for i in train_idx
+                                          if max(all_graphs[i]["target_throughput"]) <= outlier_threshold]
+
+                print(f"[dataset] Filtered {before - len(filtered_train_idx)} outlier snapshots "
+                      f"from training set.")
+            else:
+                filtered_train_idx = train_idx
+        else:
+            filtered_train_idx = train_idx
+
+        # ── Save split.json ──────────────────────────────────────────── #
+        if split_dir:
+            os.makedirs(split_dir, exist_ok=True)
+            split_meta = {
+                "seed": seed,
+                "subsample_ratio": subsample_ratio,
+                "train_ratio": train_ratio,
+                "val_ratio": val_ratio,
+                "target": target,
+                "filter_outliers": filter_outliers,
+                "outlier_percentile": outlier_percentile,
+                "outlier_threshold": outlier_threshold,
+                "data_paths": [str(p) for p in data_paths],
+                "n_total_graphs": n_total,
+                "subset_idx": subset_idx,
+                "train_idx": train_idx,
+                "filtered_train_idx": filtered_train_idx,
+                "val_idx": val_idx,
+                "test_idx": test_idx,
+            }
+            with open(os.path.join(split_dir, "split.json"), "w") as f:
+                json.dump(split_meta, f, indent=2)
+            print(f"[dataset] Split saved to {os.path.join(split_dir, 'split.json')}")
+
+    # ── Build graph lists from indices ────────────────────────────────── #
+    effective_train_idx = filtered_train_idx if filtered_train_idx is not None else train_idx
+    train_graphs = [all_graphs[i] for i in effective_train_idx]
     val_graphs   = [all_graphs[i] for i in val_idx]
     test_graphs  = [all_graphs[i] for i in test_idx]
 
-    # Fit normaliser ONLY on training data
+    # ── Fit normaliser ONLY on (filtered) training data ───────────────── #
     norm = FeatureNormalizer()
     for g in train_graphs:
         norm.accumulate(g)

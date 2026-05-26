@@ -78,7 +78,8 @@ def main():
                 scenario_id=model_name,
                 target="delay",
                 seed=42,
-                subsample_ratio=0.2  # Needs to match to get the correct test subset
+                subsample_ratio=0.2,
+                split_dir=os.path.dirname(ckpt_path)
             )
 
             # Check if normalizer is in the checkpoint

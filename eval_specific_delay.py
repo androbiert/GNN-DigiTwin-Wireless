@@ -68,8 +68,16 @@ def main():
                 data_paths=data_paths,
                 scenario_id=model_name,
                 target="delay",
-                seed=42
+                seed=42,
+                split_dir=os.path.dirname(ckpt_path)
             )
+
+            # Check if normalizer is in the checkpoint
+            if "normalizer" in ckpt:
+                print(f"  [{model_name}] Loading normalizer stats from checkpoint.")
+                normalizer.load_state(ckpt["normalizer"])
+            else:
+                print(f"  [{model_name}] Normalizer not in checkpoint, relying on dynamically built normalizer (WARNING: fragile!)")
 
             if len(test_ds) == 0:
                 print(f"  [{model_name}] No test graphs found.")

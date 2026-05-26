@@ -253,6 +253,10 @@ def train_scenario(
     print(f"\n[{label}] Device : {device}")
     print(f"[{label}] Data files: {len(data_paths)}")
 
+    # ── Checkpoint directory (needed before data loading for split.json) ── #
+    ckpt_dir = os.path.join(checkpoint_dir, scenario_id, target)
+    os.makedirs(ckpt_dir, exist_ok=True)
+
     # ── Data ──────────────────────────────────────────────────────────────── #
     train_ds, val_ds, test_ds, normalizer = build_scenario_datasets(
         data_paths=data_paths,
@@ -260,6 +264,7 @@ def train_scenario(
         target=target,
         seed=seed,
         subsample_ratio=subsample_ratio,
+        split_dir=ckpt_dir,
     )
     train_loader = DataLoader(train_ds, batch_size=32, shuffle=True,  collate_fn=collate_fn , pin_memory  = True )
     val_loader   = DataLoader(val_ds,   batch_size=64, shuffle=False, collate_fn=collate_fn, pin_memory=True)
