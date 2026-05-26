@@ -416,12 +416,12 @@ def evaluate_model(model_key, info, data_dir, device, output_dir, recache=False)
         scenario_id=model_name,
         target=target,
         seed=42,
-        split_dir=os.path.dirname(ckpt_path)
+        split_dir=os.path.dirname(info["path"])
     )
 
-    if "normalizer" in ckpt_data:
+    if "normalizer" in ckpt:
         print(f"  Loading normalizer stats from checkpoint.")
-        normalizer.load_state(ckpt_data["normalizer"])
+        normalizer.load_state(ckpt["normalizer"])
     else:
         print(f"  Normalizer not in checkpoint, relying on dynamically built normalizer (WARNING: fragile!)")
 
