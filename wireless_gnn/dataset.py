@@ -326,7 +326,7 @@ def build_scenario_datasets(
     train_ratio:  float = 0.7,
     val_ratio:    float = 0.15,
     seed:         int   = 42,
-    filter_outliers:    bool  = True,
+    filter_outliers:    bool  = False,
     outlier_percentile: float = 95.0,
     subsample_ratio:    float = 1.0,
     split_dir:    Optional[str] = None,
