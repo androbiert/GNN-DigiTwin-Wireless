@@ -19,7 +19,9 @@ def train_model(args):
     print(f"Using device: {device}")
     
     # 1. Discover data
-    configs = discover_scenarios(".", data_dir=args.data_dir)
+    # Resolve project root dynamically so the script runs from any folder
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    configs = discover_scenarios(project_root, data_dir=args.data_dir, use_cache=not args.recache, scenario_filter=args.scenario)
     groups = group_by_scenario(configs)
 
     if args.scenario not in groups:
@@ -157,6 +159,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-layers", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--recache", action="store_true")
     
     args = parser.parse_args()
         
