@@ -67,6 +67,7 @@ import matplotlib.pyplot as plt
 
 from wireless_gnn.model  import WirelessNetFermi
 from wireless_gnn.model2 import WirelessNetFermiV3
+from wireless_gnn.baseline_mlp import BaselineMLP
 from wireless_gnn.dataset import (
     WirelessDataset,
     FeatureNormalizer,
@@ -645,11 +646,11 @@ Examples:
                         help="Train only this scenario (e.g. SC01). Default: all.")
     parser.add_argument("--split-by-policy", action="store_true",
                         help="Train a separate model for each scheduling policy (e.g., PF, DRR, MAXCI)")
-    parser.add_argument("--model", default="v2", choices=["v2", "v3"],
-                        help="Model architecture: 'v2' (original) or 'v3' (enhanced with LayerNorm+FFN+GELU)")
+    parser.add_argument("--model", default="v2", choices=["v2", "v3", "baseline"],
+                        help="Model architecture: 'v2' (original), 'v3' (enhanced), or 'baseline' (MLP, no graph)")
     parser.add_argument("--root", default=".",
                         help="Project root directory")
-    parser.add_argument("--data-dir", default="Data",
+    parser.add_argument("--data-dir", default="data_cleaned",
                         help="Data subdirectory name")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--hidden-dim", type=int, default=64)
@@ -753,7 +754,12 @@ Examples:
         print(f"{'#'*70}")
 
         # Select model class
-        model_cls = WirelessNetFermiV3 if args.model == "v3" else WirelessNetFermi
+        if args.model == "v3":
+            model_cls = WirelessNetFermiV3
+        elif args.model == "baseline":
+            model_cls = BaselineMLP
+        else:
+            model_cls = WirelessNetFermi
 
         try:
             result = train_scenario(
