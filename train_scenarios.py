@@ -680,6 +680,11 @@ Examples:
     if root == ".":
         root = os.path.dirname(os.path.abspath(__file__))
 
+    # Auto-set checkpoint dir for baseline model (avoid overwriting GNN checkpoints)
+    if args.model == "baseline" and args.checkpoint_dir == "checkpoints":
+        args.checkpoint_dir = "checkpoints_baseline"
+        print(f"[INFO] Baseline model: checkpoint dir auto-set to '{args.checkpoint_dir}'")
+
     # ── Step 1: Discover ──────────────────────────────────────────────────── #
     print("\n" + "=" * 70)
     print("  PHASE 1: SCENARIO DISCOVERY")
