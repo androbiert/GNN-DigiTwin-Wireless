@@ -58,15 +58,24 @@ def main():
         model, arch_name, ckpt = load_model_from_checkpoint(ckpt_path, device)
         model.eval()
 
-        # Build the full dataset to get the exact same normalizer and test split as training
+        # Build the full dataset to get the test split
         data_paths = [c.data_path for c in tgt_cfgs]
-        print(f"[{sc_id}] Building full dataset from {len(data_paths)} configs to get general normalizer & test split...")
+        ckpt_dir = os.path.join(args.checkpoint_dir, sc_id, "throughput")
+        print(f"[{sc_id}] Building full dataset from {len(data_paths)} configs to get test split...")
         _, _, full_test_ds, normalizer = build_scenario_datasets(
             data_paths=data_paths,
             scenario_id=sc_id,
             target="throughput",
-            seed=42
+            seed=42,
+            split_dir=ckpt_dir,
         )
+
+        # Override normalizer with the one from the checkpoint (critical!)
+        if "normalizer" in ckpt:
+            print(f"[{sc_id}] Loading normalizer from checkpoint (matches training).")
+            normalizer.load_state(ckpt["normalizer"])
+        else:
+            print(f"[{sc_id}] WARNING: No normalizer in checkpoint, using recomputed one (may cause errors).")
 
         # Now group the configs by scheduling policy
         policy_folders = defaultdict(set)
