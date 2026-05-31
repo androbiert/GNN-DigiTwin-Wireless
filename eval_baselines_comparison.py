@@ -153,6 +153,10 @@ def main():
             continue
 
         tgt_cfgs = filter_for_target(cfgs, args.target)
+        
+        # Exclude MAXCI_MB from comparison
+        tgt_cfgs = [c for c in tgt_cfgs if "MAXCI_MB" not in str(c.data_path).upper()]
+        
         if not tgt_cfgs:
             continue
 
