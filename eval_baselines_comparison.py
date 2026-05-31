@@ -127,39 +127,8 @@ def main():
     )
     groups = group_by_scenario(all_configs)
 
-    # ── Pre-load baseline models (single model for all scenarios) ─────────── #
-    baseline_models = {}
-
-    # MLP
-    mlp_ckpt = os.path.join(args.mlp_checkpoint_dir, "ALL", args.target, "best.pt")
-    if os.path.exists(mlp_ckpt):
-        print(f"Loading MLP baseline from {mlp_ckpt}")
-        mlp_model, mlp_arch, mlp_ckpt_data = load_baseline_model(mlp_ckpt, BaselineMLP, device)
-        mlp_params = sum(p.numel() for p in mlp_model.parameters())
-        baseline_models["MLP Baseline"] = {
-            "model": mlp_model, "ckpt": mlp_ckpt_data, "params": mlp_params, "arch": mlp_arch
-        }
-        print(f"  MLP: {mlp_arch} | {mlp_params:,} params")
-    else:
-        print(f"MLP checkpoint not found at {mlp_ckpt}")
-
-    # LSTM
-    lstm_ckpt = os.path.join(args.lstm_checkpoint_dir, "ALL", args.target, "best.pt")
-    if os.path.exists(lstm_ckpt):
-        print(f"Loading LSTM baseline from {lstm_ckpt}")
-        lstm_model, lstm_arch, lstm_ckpt_data = load_baseline_model(lstm_ckpt, BaselineLSTM, device)
-        lstm_params = sum(p.numel() for p in lstm_model.parameters())
-        baseline_models["LSTM Baseline"] = {
-            "model": lstm_model, "ckpt": lstm_ckpt_data, "params": lstm_params, "arch": lstm_arch
-        }
-        print(f"  LSTM: {lstm_arch} | {lstm_params:,} params")
-    else:
-        print(f"LSTM checkpoint not found at {lstm_ckpt}")
-
-    if not baseline_models:
-        print("\nERROR: No baseline models found. Train them first:")
-        print("  python train_baselines.py --model all --target throughput --epochs 50")
-        sys.exit(1)
+    # We will load baseline models dynamically per-scenario to allow fair comparison
+    # (checking for SC-specific checkpoints first, then falling back to ALL)
 
     # ── Evaluate per scenario ─────────────────────────────────────────────── #
     all_results = []
@@ -238,18 +207,35 @@ def main():
         except Exception as e:
             print(f"  [GNN] ERROR: {e}")
 
-        # ── 2. Evaluate baselines (single model for all scenarios) ────────── #
-        for bl_name, bl_info in baseline_models.items():
-            print(f"  [{bl_name}] Evaluating single-model baseline...")
+        # ── 2. Evaluate baselines ─────────────────────────────────────────── #
+        baseline_configs = [
+            ("MLP Baseline", args.mlp_checkpoint_dir, BaselineMLP),
+            ("LSTM Baseline", args.lstm_checkpoint_dir, BaselineLSTM)
+        ]
 
-            bl_model = bl_info["model"]
-            bl_ckpt = bl_info["ckpt"]
+        for bl_name, bl_dir, bl_class in baseline_configs:
+            # Check for per-scenario checkpoint first (fair comparison)
+            bl_ckpt = os.path.join(bl_dir, sc_id, args.target, "best.pt")
+            is_all_model = False
+            
+            # Fallback to ALL-scenarios checkpoint
+            if not os.path.exists(bl_ckpt):
+                bl_ckpt = os.path.join(bl_dir, "ALL", args.target, "best.pt")
+                is_all_model = True
+
+            if not os.path.exists(bl_ckpt):
+                print(f"  [{bl_name}] No checkpoint found (checked {sc_id} and ALL). Skipping.")
+                continue
+
+            print(f"  [{bl_name}] Loading model ({'ALL scenarios' if is_all_model else 'per-scenario'})...")
+            bl_model, bl_arch, bl_ckpt_data = load_baseline_model(bl_ckpt, bl_class, device)
+            bl_params = sum(p.numel() for p in bl_model.parameters())
 
             # Use the BASELINE's normalizer (trained on all scenarios)
             bl_normalizer = FeatureNormalizer()
             bl_normalizer.load_state(normalizer.get_state())  # copy base
-            if "normalizer" in bl_ckpt:
-                bl_normalizer.load_state(bl_ckpt["normalizer"])
+            if "normalizer" in bl_ckpt_data:
+                bl_normalizer.load_state(bl_ckpt_data["normalizer"])
 
             test_ds.normalizer = bl_normalizer
             bl_pred, bl_true = collect_predictions(bl_model, test_ds, bl_normalizer, device)
@@ -260,7 +246,7 @@ def main():
                       f"MAPE: {bl_metrics['MAPE (%)']:.2f}% | R²: {bl_metrics['R²']:.4f}")
                 scenario_results.append({
                     "Scenario": sc_id, "Model": bl_name,
-                    "Architecture": bl_info["arch"], "Parameters": bl_info["params"],
+                    "Architecture": bl_arch, "Parameters": bl_params,
                     "MAE": float(bl_metrics["MAE"]),
                     "RMSE": float(bl_metrics["RMSE"]),
                     "MAPE": float(bl_metrics["MAPE (%)"]),
