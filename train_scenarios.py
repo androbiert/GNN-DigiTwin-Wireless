@@ -217,6 +217,8 @@ def run_epoch(
                 n          += 1
             mae_display = total_mae / max(n, 1) * scale
             metric_label = loss_type if target == "throughput" else "log_huber"
+            if metric_label == "mae":
+                metric_label = "mae_loss"
             pbar.set_postfix(loss=f"{total_loss/max(n,1):.4f}",
                              mae=f"{mae_display:.1f}{unit}",
                              **{metric_label: f"{total_mape/max(n,1):.4f}"})
