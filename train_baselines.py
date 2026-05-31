@@ -40,6 +40,8 @@ def main():
                         help="'baseline' (MLP), 'lstm', or 'all' (both)")
     parser.add_argument("--target", default="throughput", choices=["delay", "throughput"],
                         help="Target to train")
+    parser.add_argument("--loss", default="mape", choices=["mape", "mae"],
+                        help="Loss function to use for throughput (default: mape)")
     parser.add_argument("--data-dir", default="data_cleaned")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--hidden-dim", type=int, default=128,
@@ -120,6 +122,7 @@ def main():
                 subsample_ratio= args.subsample,
                 model_class    = model_cls,
                 resume         = args.resume,
+                loss_type      = args.loss,
             )
 
             # Plots

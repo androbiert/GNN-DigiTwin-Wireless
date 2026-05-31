@@ -91,6 +91,9 @@ from wireless_gnn.scenario_registry import (
 def mape_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
     return torch.mean(torch.abs((pred - target) / (target.abs() + eps)))
 
+def mae_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    return torch.mean(torch.abs(pred - target))
+
 
 def log_huber_loss(pred_log: torch.Tensor, true_log: torch.Tensor,
                    delta: float = 1.0) -> torch.Tensor:
@@ -111,7 +114,9 @@ def process_graph(
     model:      WirelessNetFermi,
     graph:      dict,
     device:     torch.device,
+    device:     torch.device,
     normalizer: FeatureNormalizer,
+    loss_type:  str = "mape",
 ) -> Tuple[torch.Tensor, float, float]:
     pred, _ = model(graph)
 
@@ -145,7 +150,10 @@ def process_graph(
                                 dtype=torch.float32, device=device)
         
         pred_phys = pred * std + mean
-        loss = mape_loss(pred_phys, true_raw)
+        if loss_type == "mae":
+            loss = mae_loss(pred_phys, true_raw)
+        else:
+            loss = mape_loss(pred_phys, true_raw)
         metric = loss.item()
         mae = mae_metric(pred_phys, true_raw)
 
@@ -163,8 +171,10 @@ def run_epoch(
     normalizer: FeatureNormalizer,
     optimizer:  Optional[torch.optim.Optimizer] = None,
     desc:       str = "",
+    desc:       str = "",
     scaler:     Optional[GradScaler] = None,
-    target:     str = 'delay'
+    target:     str = 'delay',
+    loss_type:  str = 'mape',
 ) -> Tuple[float, float, float]:
     training = optimizer is not None
     model.train(training)
@@ -186,7 +196,7 @@ def run_epoch(
                     amp_ctx = torch.amp.autocast(device.type, enabled=use_cuda) \
                               if _use_modern_amp else autocast(enabled=use_cuda)
                     with amp_ctx:
-                        loss, mape, mae = process_graph(model, graph, device, normalizer)
+                        loss, mape, mae = process_graph(model, graph, device, normalizer, loss_type)
                 except Exception as e:
                     tqdm.write(f"  [WARN] skipping bad graph: {e}")
                     continue
@@ -208,7 +218,7 @@ def run_epoch(
                 total_mae  += mae
                 n          += 1
             mae_display = total_mae / max(n, 1) * scale
-            metric_label = "mape" if target == "throughput" else "log_huber"
+            metric_label = loss_type if target == "throughput" else "log_huber"
             pbar.set_postfix(loss=f"{total_loss/max(n,1):.4f}",
                              mae=f"{mae_display:.1f}{unit}",
                              **{metric_label: f"{total_mape/max(n,1):.4f}"})
@@ -237,8 +247,10 @@ def train_scenario(
     checkpoint_dir: str   = "checkpoints",
     seed:           int   = 42,
     subsample_ratio: float = 1.0,
+    subsample_ratio: float = 1.0,
     model_class     = None,
     resume:         bool  = False,
+    loss_type:      str   = "mape",
 ) -> dict:
     """
     Train one model for a specific scenario × target.
@@ -338,7 +350,7 @@ def train_scenario(
     unit = "ms" if target == "delay" else "kbps"
     scale = 1000.0 if target == "delay" else 1e-3  # s→ms, bps→kbps
 
-    loss_label = "Log-Huber" if target == "delay" else "MAPE"
+    loss_label = "Log-Huber" if target == "delay" else loss_type.upper()
     print(f"\n[{label}] {'Epoch':>6}  {'Train Loss':>12}  {'Val Loss':>10}  {f'Val MAE ({unit})':>12}  {f'Train {loss_label}':>12}  {f'Val {loss_label}':>10}  {'Best?':>5}  {'LR':>10}  {'Time':>7}")
     print(f"[{label}] " + "-" * 107)
 
@@ -349,11 +361,11 @@ def train_scenario(
 
         train_loss, train_mape, train_mae = run_epoch(
             model, train_loader, device, normalizer, optimizer,
-            desc=f"  train ep{epoch:03d}", scaler=scaler, target=target
+            desc=f"  train ep{epoch:03d}", scaler=scaler, target=target, loss_type=loss_type
         )
         val_loss, val_mape, val_mae = run_epoch(
             model, val_loader,   device, normalizer,
-            desc=f"  val   ep{epoch:03d}", scaler=scaler, target=target
+            desc=f"  val   ep{epoch:03d}", scaler=scaler, target=target, loss_type=loss_type
         )
 
         if epoch == 1:
@@ -434,9 +446,10 @@ def train_scenario(
 
     # ── Test final ────────────────────────────────────────────────────────── #
     model.load_state_dict(best_state)
+    model.load_state_dict(best_state)
     test_loss, test_mape, test_mae = run_epoch(
         model, test_loader, device, normalizer,
-        desc="  test", scaler=scaler, target=target
+        desc="  test", scaler=scaler, target=target, loss_type=loss_type
     )
 
     print(f"\n{'='*60}")
@@ -444,7 +457,7 @@ def train_scenario(
     if target == "delay":
         print(f"  Log-Huber Loss:     {test_mape:.4f}")
     else:
-        print(f"  MAPE:               {test_mape:.4%}")
+        print(f"  {loss_type.upper()}:               {test_mape:.4f}" if loss_type == "mae" else f"  MAPE:               {test_mape:.4%}")
     print(f"  MAE:                {test_mae * scale:.4f} {unit}")
     print(f"  Best val loss:      {best_val:.4f}")
     print(f"  Checkpoint:         {best_ckpt}")
@@ -643,6 +656,8 @@ Examples:
     )
     parser.add_argument("--target", default="all", choices=["delay", "throughput", "all"],
                         help="Target to train: 'delay', 'throughput', or 'all'")
+    parser.add_argument("--loss", default="mape", choices=["mape", "mae"],
+                        help="Loss function to use for throughput (default: mape)")
     parser.add_argument("--scenario", default=None,
                         help="Train only this scenario (e.g. SC01). Default: all.")
     parser.add_argument("--split-by-policy", action="store_true",
@@ -791,6 +806,7 @@ Examples:
                 subsample_ratio=args.subsample,
                 model_class   = model_cls,
                 resume        = args.resume,
+                loss_type     = args.loss,
             )
 
             # ── Plots ────────────────────────────────────────────────────── #
