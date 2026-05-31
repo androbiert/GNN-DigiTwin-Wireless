@@ -4,8 +4,8 @@ eval_baselines_comparison.py — Compare per-scenario GNN vs single MLP/LSTM bas
 The GNN has one model per scenario (checkpoints/SC01/throughput/best.pt).
 The baselines have ONE model trained on all scenarios (checkpoints_baseline/ALL/throughput/best.pt).
 
-This script evaluates all three on the SAME test set per scenario and prints
-a side-by-side comparison showing GNN superiority.
+This script evaluates all three on the SAME test set per scenario, prints
+a side-by-side comparison table, and shows 10 sample predictions per scenario.
 
 Usage:
   python eval_baselines_comparison.py
@@ -30,7 +30,7 @@ from evaluate_models import (
     compute_metrics,
     predict_with_timing,
 )
-from wireless_gnn.dataset import build_scenario_datasets, collate_fn, WirelessDataset
+from wireless_gnn.dataset import build_scenario_datasets, collate_fn, WirelessDataset, FeatureNormalizer
 from wireless_gnn.scenario_registry import (
     discover_scenarios, group_by_scenario, filter_for_target,
 )
@@ -62,8 +62,8 @@ def load_baseline_model(ckpt_path: str, model_class, device: torch.device):
     return model, model_class.__name__, ckpt
 
 
-def evaluate_model_on_test(model, test_ds, normalizer, device, target):
-    """Evaluate a model on a test dataset, returning metrics."""
+def collect_predictions(model, test_ds, normalizer, device):
+    """Run model on test set and return (all_pred, all_true) as flat arrays."""
     loader = DataLoader(test_ds, batch_size=64, shuffle=False, collate_fn=collate_fn)
 
     all_pred = []
@@ -82,11 +82,9 @@ def evaluate_model_on_test(model, test_ds, normalizer, device, target):
                     continue
 
     if not all_pred:
-        return None
+        return None, None
 
-    pred = np.concatenate(all_pred)
-    true = np.concatenate(all_true)
-    return compute_metrics(pred, true)
+    return np.concatenate(all_pred), np.concatenate(all_true)
 
 
 # --------------------------------------------------------------------------- #
@@ -107,6 +105,8 @@ def main():
     parser.add_argument("--target", default="throughput", choices=["delay", "throughput"])
     parser.add_argument("--scenario", default=None,
                         help="Evaluate only this scenario (e.g., SC01)")
+    parser.add_argument("--n-samples", type=int, default=10,
+                        help="Number of sample predictions to show per scenario")
     parser.add_argument("--recache", action="store_true")
     args = parser.parse_args()
 
@@ -200,6 +200,8 @@ def main():
             continue
 
         scenario_results = []
+        # Store predictions for sample comparison: { model_name: (pred, true) }
+        model_predictions = {}
 
         # ── 1. Evaluate GNN (per-scenario model) ─────────────────────────── #
         print(f"\n  [GNN (Ours)] Loading per-scenario model...")
@@ -209,12 +211,15 @@ def main():
             gnn_params = sum(p.numel() for p in gnn_model.parameters())
 
             # Use GNN's normalizer
-            gnn_normalizer = normalizer
+            gnn_normalizer = FeatureNormalizer()
+            gnn_normalizer.load_state(normalizer.get_state())  # copy base
             if "normalizer" in gnn_ckpt_data:
                 gnn_normalizer.load_state(gnn_ckpt_data["normalizer"])
 
-            gnn_metrics = evaluate_model_on_test(gnn_model, test_ds, gnn_normalizer, device, args.target)
-            if gnn_metrics:
+            gnn_pred, gnn_true = collect_predictions(gnn_model, test_ds, gnn_normalizer, device)
+            if gnn_pred is not None:
+                gnn_metrics = compute_metrics(gnn_pred, gnn_true)
+                model_predictions["GNN (Ours)"] = (gnn_pred, gnn_true)
                 print(f"  [GNN (Ours)] MAE: {gnn_metrics['MAE']*scale:.2f} {unit} | "
                       f"MAPE: {gnn_metrics['MAPE (%)']:.2f}% | R²: {gnn_metrics['R²']:.4f}")
                 scenario_results.append({
@@ -240,12 +245,15 @@ def main():
             bl_ckpt = bl_info["ckpt"]
 
             # Use the BASELINE's normalizer (trained on all scenarios)
-            bl_normalizer = normalizer  # re-create from scratch
+            bl_normalizer = FeatureNormalizer()
+            bl_normalizer.load_state(normalizer.get_state())  # copy base
             if "normalizer" in bl_ckpt:
                 bl_normalizer.load_state(bl_ckpt["normalizer"])
 
-            bl_metrics = evaluate_model_on_test(bl_model, test_ds, bl_normalizer, device, args.target)
-            if bl_metrics:
+            bl_pred, bl_true = collect_predictions(bl_model, test_ds, bl_normalizer, device)
+            if bl_pred is not None:
+                bl_metrics = compute_metrics(bl_pred, bl_true)
+                model_predictions[bl_name] = (bl_pred, bl_true)
                 print(f"  [{bl_name}] MAE: {bl_metrics['MAE']*scale:.2f} {unit} | "
                       f"MAPE: {bl_metrics['MAPE (%)']:.2f}% | R²: {bl_metrics['R²']:.4f}")
                 scenario_results.append({
@@ -285,6 +293,50 @@ def main():
                         mae_improv = ((r["MAE"] - gnn_r["MAE"]) / r["MAE"]) * 100
                         print(f"  → GNN improves over {r['Model']}: "
                               f"MAPE -{mape_improv:.1f}% | MAE -{mae_improv:.1f}%")
+
+        # ── Sample-by-sample comparison ───────────────────────────────────── #
+        if len(model_predictions) > 1:
+            # Get the ground truth from the GNN predictions (all should share same GT)
+            ref_name = list(model_predictions.keys())[0]
+            ref_true = model_predictions[ref_name][1]
+
+            # Use the minimum length across all models
+            min_len = min(len(v[0]) for v in model_predictions.values())
+            n_show = min(args.n_samples, min_len)
+
+            if n_show > 0:
+                # Pick random sample indices (fixed seed for reproducibility)
+                rng = np.random.default_rng(42)
+                sample_idx = rng.choice(min_len, size=n_show, replace=False)
+                sample_idx = np.sort(sample_idx)
+
+                model_names = list(model_predictions.keys())
+
+                print(f"\n  {'─'*120}")
+                print(f"  SAMPLE PREDICTIONS — {sc_id} ({n_show} samples, {args.target.upper()})")
+                print(f"  {'─'*120}")
+
+                # Header
+                header = f"  {'#':<4} {'Ground Truth':>14}"
+                for mn in model_names:
+                    short = mn.replace(" Baseline", "").replace(" (Ours)", "")
+                    header += f" {'|':>3} {short+' Pred':>14} {short+' Err':>12}"
+                print(header)
+                print(f"  {'─'*120}")
+
+                for rank, idx in enumerate(sample_idx):
+                    gt_val = ref_true[idx] * scale
+                    row = f"  {rank+1:<4} {gt_val:>12.2f} {unit}"
+
+                    for mn in model_names:
+                        pred_arr = model_predictions[mn][0]
+                        pred_val = pred_arr[idx] * scale
+                        err_val = pred_val - gt_val
+                        row += f"   | {pred_val:>12.2f} {err_val:>+12.2f}"
+
+                    print(row)
+
+                print(f"  {'─'*120}")
 
         all_results.extend(scenario_results)
 
