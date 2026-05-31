@@ -17,6 +17,7 @@ import sys
 import os
 import argparse
 import json
+import glob
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
@@ -87,6 +88,18 @@ def collect_predictions(model, test_ds, normalizer, device):
     return np.concatenate(all_pred), np.concatenate(all_true)
 
 
+def get_checkpoint_path(base_dir: str, epoch: int = None) -> str:
+    """Return path to best.pt or epoch_XXX.pt if epoch is specified."""
+    if epoch is None:
+        return os.path.join(base_dir, "best.pt")
+    
+    pattern = os.path.join(base_dir, f"epoch_{epoch:03d}_*.pt")
+    matches = glob.glob(pattern)
+    if matches:
+        return matches[0]
+    return os.path.join(base_dir, "best.pt")  # fallback if epoch not found
+
+
 # --------------------------------------------------------------------------- #
 # Main
 # --------------------------------------------------------------------------- #
@@ -105,6 +118,8 @@ def main():
     parser.add_argument("--target", default="throughput", choices=["delay", "throughput"])
     parser.add_argument("--scenario", default=None,
                         help="Evaluate only this scenario (e.g., SC01)")
+    parser.add_argument("--epoch", type=int, default=None,
+                        help="Load specific epoch checkpoint instead of best.pt (e.g., 10)")
     parser.add_argument("--n-samples", type=int, default=10,
                         help="Number of sample predictions to show per scenario")
     parser.add_argument("--recache", action="store_true")
@@ -142,7 +157,13 @@ def main():
             continue
 
         # Check GNN checkpoint
-        gnn_ckpt_path = os.path.join(args.gnn_checkpoint_dir, sc_id, args.target, "best.pt")
+        gnn_dir = os.path.join(args.gnn_checkpoint_dir, sc_id, args.target)
+
+        # Force epoch 10 for SC07 only
+        forced_epoch = 10 if sc_id.upper() == "SC07" else args.epoch
+
+        gnn_ckpt_path = get_checkpoint_path(gnn_dir, forced_epoch)
+
         if not os.path.exists(gnn_ckpt_path):
             print(f"\n[{sc_id}] No GNN checkpoint at {gnn_ckpt_path}, skipping.")
             continue
@@ -215,16 +236,18 @@ def main():
 
         for bl_name, bl_dir, bl_class in baseline_configs:
             # Check for per-scenario checkpoint first (fair comparison)
-            bl_ckpt = os.path.join(bl_dir, sc_id, args.target, "best.pt")
+            bl_sc_dir = os.path.join(bl_dir, sc_id, args.target)
+            bl_ckpt = get_checkpoint_path(bl_sc_dir, args.epoch)
             is_all_model = False
             
             # Fallback to ALL-scenarios checkpoint
             if not os.path.exists(bl_ckpt):
-                bl_ckpt = os.path.join(bl_dir, "ALL", args.target, "best.pt")
+                bl_all_dir = os.path.join(bl_dir, "ALL", args.target)
+                bl_ckpt = get_checkpoint_path(bl_all_dir, args.epoch)
                 is_all_model = True
 
             if not os.path.exists(bl_ckpt):
-                print(f"  [{bl_name}] No checkpoint found (checked {sc_id} and ALL). Skipping.")
+                print(f"  [{bl_name}] No checkpoint found at {bl_ckpt}. Skipping.")
                 continue
 
             print(f"  [{bl_name}] Loading model ({'ALL scenarios' if is_all_model else 'per-scenario'})...")
