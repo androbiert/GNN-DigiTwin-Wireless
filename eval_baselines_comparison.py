@@ -216,6 +216,7 @@ def main():
             if "normalizer" in gnn_ckpt_data:
                 gnn_normalizer.load_state(gnn_ckpt_data["normalizer"])
 
+            test_ds.normalizer = gnn_normalizer
             gnn_pred, gnn_true = collect_predictions(gnn_model, test_ds, gnn_normalizer, device)
             if gnn_pred is not None:
                 gnn_metrics = compute_metrics(gnn_pred, gnn_true)
@@ -250,6 +251,7 @@ def main():
             if "normalizer" in bl_ckpt:
                 bl_normalizer.load_state(bl_ckpt["normalizer"])
 
+            test_ds.normalizer = bl_normalizer
             bl_pred, bl_true = collect_predictions(bl_model, test_ds, bl_normalizer, device)
             if bl_pred is not None:
                 bl_metrics = compute_metrics(bl_pred, bl_true)
