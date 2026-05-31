@@ -114,7 +114,6 @@ def process_graph(
     model:      WirelessNetFermi,
     graph:      dict,
     device:     torch.device,
-    device:     torch.device,
     normalizer: FeatureNormalizer,
     loss_type:  str = "mape",
 ) -> Tuple[torch.Tensor, float, float]:
@@ -170,7 +169,6 @@ def run_epoch(
     device:     torch.device,
     normalizer: FeatureNormalizer,
     optimizer:  Optional[torch.optim.Optimizer] = None,
-    desc:       str = "",
     desc:       str = "",
     scaler:     Optional[GradScaler] = None,
     target:     str = 'delay',
@@ -246,7 +244,6 @@ def train_scenario(
     device_str:     str   = "auto",
     checkpoint_dir: str   = "checkpoints",
     seed:           int   = 42,
-    subsample_ratio: float = 1.0,
     subsample_ratio: float = 1.0,
     model_class     = None,
     resume:         bool  = False,
@@ -445,7 +442,6 @@ def train_scenario(
             break
 
     # ── Test final ────────────────────────────────────────────────────────── #
-    model.load_state_dict(best_state)
     model.load_state_dict(best_state)
     test_loss, test_mape, test_mae = run_epoch(
         model, test_loader, device, normalizer,
