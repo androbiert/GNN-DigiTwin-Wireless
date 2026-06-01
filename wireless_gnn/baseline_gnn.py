@@ -19,30 +19,68 @@ from wireless_gnn.model import FLOW_FEAT_DIM, QUEUE_FEAT_DIM, LINK_FEAT_DIM
 HOMOGENEOUS_FEAT_DIM = max(FLOW_FEAT_DIM, QUEUE_FEAT_DIM, LINK_FEAT_DIM)
 
 class SimpleGNNLayer(nn.Module):
-    """
-    A very simple message passing layer.
-    h_i^{l+1} = ReLU( Linear( h_i^l + mean_{j in N(i)} h_j^l ) )
-    """
-    def __init__(self, hidden_dim: int):
-        super().__init__()
-        self.linear = nn.Linear(hidden_dim, hidden_dim)
 
-    def forward(self, x: torch.Tensor, src: torch.Tensor, dst: torch.Tensor, num_nodes: int) -> torch.Tensor:
-        # Aggregate messages from neighbors
-        msg = x[src]
-        
-        out = torch.zeros(num_nodes, x.size(1), device=x.device, dtype=x.dtype)
-        count = torch.zeros(num_nodes, 1, device=x.device, dtype=x.dtype)
-        
-        out.scatter_add_(0, dst.unsqueeze(1).expand_as(msg), msg)
-        count.scatter_add_(0, dst.unsqueeze(1), torch.ones_like(count)[src])
-        
-        # Mean pooling
+    def __init__(self, hidden_dim, dropout=0.1):
+        super().__init__()
+
+        # Message network
+        self.agg_mlp = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU()
+        )
+
+        # Update network
+        self.update_mlp = nn.Sequential(
+            nn.Linear(2 * hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU()
+        )
+
+    def forward(self, x, src, dst, num_nodes):
+
+        # Neighbor messages
+        msg = self.agg_mlp(x[src])
+
+        out = torch.zeros(
+            num_nodes,
+            x.size(1),
+            device=x.device,
+            dtype=x.dtype
+        )
+
+        count = torch.zeros(
+            num_nodes,
+            1,
+            device=x.device,
+            dtype=x.dtype
+        )
+
+        out.scatter_add_(
+            0,
+            dst.unsqueeze(1).expand_as(msg),
+            msg
+        )
+
+        count.scatter_add_(
+            0,
+            dst.unsqueeze(1),
+            torch.ones_like(count)[src]
+        )
+
         agg = out / count.clamp(min=1.0)
-        
-        # Add self-connection (x) and apply linear transformation
-        h_new = self.linear(x + agg)
-        return F.relu(h_new)
+
+        h = torch.cat([x, agg], dim=-1)
+
+        update = self.update_mlp(h)
+
+        return x + update
 
 class BaselineGNN(nn.Module):
     """
@@ -74,7 +112,7 @@ class BaselineGNN(nn.Module):
 
         # Simple GNN layers
         self.layers = nn.ModuleList([
-            SimpleGNNLayer(hidden_dim) for _ in range(iterations)
+            SimpleGNNLayer(hidden_dim, dropout=dropout) for _ in range(iterations)
         ])
 
         # Readout MLP (predicts target for flow nodes only)
