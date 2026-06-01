@@ -24,6 +24,7 @@ if _project_root not in sys.path:
 
 from wireless_gnn.baseline_mlp import BaselineMLP
 from wireless_gnn.baseline_lstm import BaselineLSTM
+from wireless_gnn.baseline_gnn import BaselineGNN
 from wireless_gnn.scenario_registry import (
     discover_scenarios, group_by_scenario, filter_for_target, print_summary,
 )
@@ -36,8 +37,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Train MLP/LSTM baselines on ALL scenarios combined",
     )
-    parser.add_argument("--model", default="all", choices=["baseline", "lstm", "all"],
-                        help="'baseline' (MLP), 'lstm', or 'all' (both)")
+    parser.add_argument("--model", default="all", choices=["baseline", "lstm", "baseline_gnn", "all"],
+                        help="'baseline' (MLP), 'lstm', 'baseline_gnn', or 'all' (all of them)")
     parser.add_argument("--target", default="throughput", choices=["delay", "throughput"],
                         help="Target to train")
     parser.add_argument("--loss", default="mape", choices=["mape", "mae"],
@@ -95,6 +96,8 @@ def main():
         models_to_train.append(("baseline", BaselineMLP, "checkpoints_baseline"))
     if args.model in ("lstm", "all"):
         models_to_train.append(("lstm", BaselineLSTM, "checkpoints_baseline_lstm"))
+    if args.model in ("baseline_gnn", "all"):
+        models_to_train.append(("baseline_gnn", BaselineGNN, "checkpoints_baseline_gnn"))
 
     # ── Train each baseline ───────────────────────────────────────────────── #
     for model_name, model_cls, ckpt_dir in models_to_train:

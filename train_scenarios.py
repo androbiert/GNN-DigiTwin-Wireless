@@ -69,6 +69,7 @@ from wireless_gnn.model  import WirelessNetFermi
 from wireless_gnn.model2 import WirelessNetFermiV3
 from wireless_gnn.baseline_mlp import BaselineMLP
 from wireless_gnn.baseline_lstm import BaselineLSTM
+from wireless_gnn.baseline_gnn import BaselineGNN
 from wireless_gnn.dataset import (
     WirelessDataset,
     FeatureNormalizer,
@@ -660,8 +661,8 @@ Examples:
                         help="Train only this scenario (e.g. SC01). Default: all.")
     parser.add_argument("--split-by-policy", action="store_true",
                         help="Train a separate model for each scheduling policy (e.g., PF, DRR, MAXCI)")
-    parser.add_argument("--model", default="v2", choices=["v2", "v3", "baseline", "lstm"],
-                        help="Model architecture: 'v2' (original), 'v3' (enhanced), 'baseline' (MLP, no graph), or 'lstm' (BiLSTM, no graph)")
+    parser.add_argument("--model", default="v2", choices=["v2", "v3", "baseline", "lstm", "baseline_gnn"],
+                        help="Model architecture: 'v2' (original), 'v3' (enhanced), 'baseline' (MLP, no graph), 'lstm' (BiLSTM, no graph), or 'baseline_gnn' (simple homogeneous GNN)")
     parser.add_argument("--root", default=".",
                         help="Project root directory")
     parser.add_argument("--data-dir", default="data_cleaned",
@@ -701,6 +702,9 @@ Examples:
     elif args.model == "lstm" and args.checkpoint_dir == "checkpoints":
         args.checkpoint_dir = "checkpoints_baseline_lstm"
         print(f"[INFO] Baseline LSTM model: checkpoint dir auto-set to '{args.checkpoint_dir}'")
+    elif args.model == "baseline_gnn" and args.checkpoint_dir == "checkpoints":
+        args.checkpoint_dir = "checkpoints_baseline_gnn"
+        print(f"[INFO] Baseline GNN model: checkpoint dir auto-set to '{args.checkpoint_dir}'")
 
     # ── Step 1: Discover ──────────────────────────────────────────────────── #
     print("\n" + "=" * 70)
@@ -782,6 +786,8 @@ Examples:
             model_cls = BaselineMLP
         elif args.model == "lstm":
             model_cls = BaselineLSTM
+        elif args.model == "baseline_gnn":
+            model_cls = BaselineGNN
         else:
             model_cls = WirelessNetFermi
 
