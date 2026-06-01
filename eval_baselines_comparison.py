@@ -37,6 +37,7 @@ from wireless_gnn.scenario_registry import (
 )
 from wireless_gnn.baseline_mlp import BaselineMLP
 from wireless_gnn.baseline_lstm import BaselineLSTM
+from wireless_gnn.baseline_gnn import BaselineGNN
 
 
 # --------------------------------------------------------------------------- #
@@ -44,7 +45,7 @@ from wireless_gnn.baseline_lstm import BaselineLSTM
 # --------------------------------------------------------------------------- #
 
 def load_baseline_model(ckpt_path: str, model_class, device: torch.device):
-    """Load a baseline model (MLP or LSTM) from a checkpoint."""
+    """Load a baseline model (MLP, LSTM, or GNN) from a checkpoint."""
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
 
     hidden_dim = ckpt.get("hidden_dim", 128)
@@ -52,10 +53,14 @@ def load_baseline_model(ckpt_path: str, model_class, device: torch.device):
 
     state_dict = ckpt.get("model", ckpt)
 
-    model = model_class(
-        hidden_dim=hidden_dim,
-        target=target,
-    )
+    kwargs = {
+        "hidden_dim": hidden_dim,
+        "target": target,
+    }
+    if "iterations" in ckpt and model_class.__name__ == "BaselineGNN":
+        kwargs["iterations"] = ckpt["iterations"]
+
+    model = model_class(**kwargs)
     model.load_state_dict(state_dict)
     model = model.to(device)
     model.eval()
@@ -115,6 +120,8 @@ def main():
                         help="MLP baseline checkpoint directory (single 'ALL' model)")
     parser.add_argument("--lstm-checkpoint-dir", default="checkpoints_baseline_lstm",
                         help="LSTM baseline checkpoint directory (single 'ALL' model)")
+    parser.add_argument("--gnn-baseline-checkpoint-dir", default="checkpoints_baseline_gnn",
+                        help="GNN baseline checkpoint directory (single 'ALL' model)")
     parser.add_argument("--target", default="throughput", choices=["delay", "throughput"])
     parser.add_argument("--scenario", default=None,
                         help="Evaluate only this scenario (e.g., SC01)")
@@ -138,7 +145,8 @@ def main():
     print("Discovering scenarios...")
     all_configs = discover_scenarios(
         _project_root, data_dir=args.data_dir, validate=True,
-        verbose=False, use_cache=not args.recache
+        verbose=False, use_cache=not args.recache,
+        scenario_filter=args.scenario
     )
     groups = group_by_scenario(all_configs)
 
@@ -235,7 +243,8 @@ def main():
         # ── 2. Evaluate baselines ─────────────────────────────────────────── #
         baseline_configs = [
             ("MLP Baseline", args.mlp_checkpoint_dir, BaselineMLP),
-            ("LSTM Baseline", args.lstm_checkpoint_dir, BaselineLSTM)
+            ("LSTM Baseline", args.lstm_checkpoint_dir, BaselineLSTM),
+            ("GNN Baseline", args.gnn_baseline_checkpoint_dir, BaselineGNN)
         ]
 
         for bl_name, bl_dir, bl_class in baseline_configs:
