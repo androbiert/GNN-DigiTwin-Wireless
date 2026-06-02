@@ -210,6 +210,8 @@ def discover_scenarios(
             if configs and os.path.isfile(configs[0].data_path):
                 if verbose:
                     print(f"[registry] Loaded {len(configs)} configs from cache.")
+                if scenario_filter:
+                    configs = [c for c in configs if c.scenario_id.upper() == scenario_filter.upper()]
                 return configs
         except Exception as e:
             if verbose:
@@ -285,8 +287,8 @@ def discover_scenarios(
         if skipped_no_data:
             print(f"[registry] Skipped {skipped_no_data} folders (no data.json)")
 
-    # Save to cache
-    if use_cache:
+    # Save to cache - ONLY if we performed a full, unfiltered scan!
+    if use_cache and scenario_filter is None:
         try:
             cached_data = [sim_config_to_dict(c) for c in configs]
             with open(cache_path, "w", encoding="utf-8") as f:
@@ -296,6 +298,10 @@ def discover_scenarios(
         except Exception as e:
             if verbose:
                 print(f"[registry] WARNING: Failed to save cache: {e}")
+
+    # Apply scenario filter to scanned configs if specified
+    if scenario_filter:
+        configs = [c for c in configs if c.scenario_id.upper() == scenario_filter.upper()]
 
     return configs
 
