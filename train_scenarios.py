@@ -337,6 +337,9 @@ def train_scenario(
                 scheduler.load_state_dict(ckpt_data["scheduler"])
             start_epoch = ckpt_data.get("epoch", 0) + 1
             best_val    = ckpt_data.get("best_val", float("inf"))
+            if loss_type == "mae" and best_val < 2.0:
+                print(f"[{label}] Resetting best_val from {best_val:.4f} to infinity because of scale difference between old MAPE loss and new MAE loss.")
+                best_val = float("inf")
             history     = ckpt_data.get("history", {"train": [], "val": []})
             no_improve  = ckpt_data.get("no_improve", 0)
             # Also load best_state from best.pt if it exists
@@ -431,13 +434,21 @@ def train_scenario(
                 best=f"{best_val:.4f}", s=f"{elapsed:.1f}s"
             )
         else:
-            tqdm.write(
-                f"[{label}] {epoch:6d}  {train_loss:12.4f}  {val_loss:10.4f}  {val_mae * scale:12.4f}  "
-                f"{train_mape*100:11.2f}%  {val_mape*100:9.2f}%  {marker}  {cur_lr:10.2e}  {elapsed:6.1f}s"
-            )
+            if loss_type == "mae":
+                tqdm.write(
+                    f"[{label}] {epoch:6d}  {train_loss:12.4f}  {val_loss:10.4f}  {val_mae * scale:12.4f}  "
+                    f"{train_mape * scale:11.2f}{unit}  {val_mape * scale:9.2f}{unit}  {marker}  {cur_lr:10.2e}  {elapsed:6.1f}s"
+                )
+            else:
+                tqdm.write(
+                    f"[{label}] {epoch:6d}  {train_loss:12.4f}  {val_loss:10.4f}  {val_mae * scale:12.4f}  "
+                    f"{train_mape*100:11.2f}%  {val_mape*100:9.2f}%  {marker}  {cur_lr:10.2e}  {elapsed:6.1f}s"
+                )
             epoch_bar.set_postfix(
-                train=f"{train_mape:.4%}", val=f"{val_mape:.4%}",
-                best=f"{best_val:.4%}", s=f"{elapsed:.1f}s"
+                train=f"{train_mape:.4%}" if loss_type != "mae" else f"{train_mape*scale:.2f}{unit}",
+                val=f"{val_mape:.4%}" if loss_type != "mae" else f"{val_mape*scale:.2f}{unit}",
+                best=f"{best_val:.4%}" if loss_type != "mae" else f"{best_val*scale:.2f}{unit}",
+                s=f"{elapsed:.1f}s"
             )
 
         if no_improve >= patience:
