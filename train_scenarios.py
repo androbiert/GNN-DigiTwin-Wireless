@@ -839,4 +839,4 @@ Examples:
         summary_path = os.path.join(args.checkpoint_dir, "training_summary.json")
         save_results_json(all_results, summary_path)
 
-    print(f"\n✅ Done! Trained {len(all_results)}/{len(training_plan)} models.\n")
+    print(f"\n Done! Trained {len(all_results)}/{len(training_plan)} models.\n")

@@ -108,8 +108,11 @@ def main():
             
         # --- THROUGHPUT (Débit) ---
         if model_tput is not None:
-            # Adaptation pour le modèle débit (qui attend 3 features)
+            # Adaptation pour le modèle débit (qui attend 3 features) et remplacement de l'input tput par delay
             graph_tput = copy.deepcopy(graph)
+            if "flow_feat" in graph_tput and "target_delay" in graph_tput:
+                graph_tput["flow_feat"] = graph_tput["flow_feat"].copy()
+                graph_tput["flow_feat"][:, 2] = graph_tput["target_delay"]
             if graph_tput["queue_feat"].shape[1] == 2:
                 pad = np.zeros((graph_tput["queue_feat"].shape[0], 1), dtype=np.float32)
                 graph_tput["queue_feat"] = np.hstack([graph_tput["queue_feat"], pad])

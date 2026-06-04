@@ -144,7 +144,7 @@ def train(
     print(f"\n[{label}] Device : {device}")
 
     # ── Data ──────────────────────────────────────────────────────────────── #
-    train_ds, val_ds, test_ds, normalizer = build_datasets(project_root)
+    train_ds, val_ds, test_ds, normalizer = build_datasets(project_root, target=target)
     train_loader = DataLoader(train_ds, batch_size=1, shuffle=True,  collate_fn=collate_fn)
     val_loader   = DataLoader(val_ds,   batch_size=1, shuffle=False, collate_fn=collate_fn)
     test_loader  = DataLoader(test_ds,  batch_size=1, shuffle=False, collate_fn=collate_fn)
@@ -396,7 +396,7 @@ if __name__ == "__main__":
     plot_loss_curve(results["history"], args.target, plot_dir)
 
     from wireless_gnn.dataset import build_datasets
-    _, _, test_ds, norm = build_datasets(root)
+    _, _, test_ds, norm = build_datasets(root, target=args.target)
     
     device = next(results["model"].parameters()).device
     test_results = []

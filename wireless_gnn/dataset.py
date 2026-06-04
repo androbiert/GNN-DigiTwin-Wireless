@@ -272,6 +272,7 @@ class WirelessDataset(Dataset):
 
 def build_datasets(
     project_root: str,
+    target:       str   = "delay",
     train_ratio: float = 0.7,
     val_ratio:   float = 0.15,
     seed:        int   = 42,
@@ -283,6 +284,13 @@ def build_datasets(
     Returns (train_dataset, val_dataset, test_dataset, normalizer).
     """
     all_graphs = load_all_snapshots(project_root)
+
+    # Replace throughput input feature with delay if target is throughput to prevent data leakage and provide delay feature
+    if target == "throughput":
+        for g in all_graphs:
+            if "flow_feat" in g and "target_delay" in g:
+                g["flow_feat"] = g["flow_feat"].copy()
+                g["flow_feat"][:, 2] = g["target_delay"]
 
     rng = np.random.default_rng(seed)
     idx = rng.permutation(len(all_graphs))
@@ -371,6 +379,13 @@ def build_scenario_datasets(
         data_paths=data_paths,
         scenario_id=scenario_id,
     )
+
+    # Replace throughput input feature with delay if target is throughput to prevent data leakage and provide delay feature
+    if target == "throughput":
+        for g in all_graphs:
+            if "flow_feat" in g and "target_delay" in g:
+                g["flow_feat"] = g["flow_feat"].copy()
+                g["flow_feat"][:, 2] = g["target_delay"]
 
     if not all_graphs:
         raise ValueError(
