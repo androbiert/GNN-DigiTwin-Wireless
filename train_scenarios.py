@@ -238,7 +238,7 @@ def train_scenario(
     project_root:   str,
     hidden_dim:     int   = 64,
     num_heads:      int   = 4,
-    iterations:     int   = 8,
+    iterations:     int   = 3,
     dropout:        float = 0.1,
     epochs:         int   = 50,
     lr:             float = 1e-3,
@@ -681,7 +681,7 @@ Examples:
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--hidden-dim", type=int, default=64)
     parser.add_argument("--num-heads", type=int, default=4)
-    parser.add_argument("--iterations", type=int, default=8)
+    parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--patience", type=int, default=10)
