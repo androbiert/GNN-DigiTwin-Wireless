@@ -98,6 +98,7 @@ def _validate_data(data_path: str, quick_limit: int = 10) -> dict:
             data = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         print(f"  [registry] WARNING: cannot read {data_path}: {e}")
+        info["traffic_types"] = list(info["traffic_types"])
         return info
 
     info["n_snapshots"] = len(data)

@@ -238,7 +238,7 @@ def train_scenario(
     project_root:   str,
     hidden_dim:     int   = 64,
     num_heads:      int   = 4,
-    iterations:     int   = 3,
+    iterations:     int   = 4,
     dropout:        float = 0.1,
     epochs:         int   = 50,
     lr:             float = 1e-3,
@@ -672,7 +672,7 @@ Examples:
                         help="Train only this scenario (e.g. SC01). Default: all.")
     parser.add_argument("--split-by-policy", action="store_true",
                         help="Train a separate model for each scheduling policy (e.g., PF, DRR, MAXCI)")
-    parser.add_argument("--model", default="v2", choices=["v2", "v3", "baseline", "lstm", "baseline_gnn"],
+    parser.add_argument("--model", default="v3", choices=["v2", "v3", "baseline", "lstm", "baseline_gnn"],
                         help="Model architecture: 'v2' (original), 'v3' (enhanced), 'baseline' (MLP, no graph), 'lstm' (BiLSTM, no graph), or 'baseline_gnn' (simple homogeneous GNN)")
     parser.add_argument("--root", default=".",
                         help="Project root directory")
@@ -681,7 +681,7 @@ Examples:
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--hidden-dim", type=int, default=64)
     parser.add_argument("--num-heads", type=int, default=4)
-    parser.add_argument("--iterations", type=int, default=3)
+    parser.add_argument("--iterations", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--patience", type=int, default=10)

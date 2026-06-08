@@ -5,11 +5,11 @@ A minimal single-layer unidirectional LSTM that predicts per-flow throughput
 WITHOUT using any graph structure or message passing.
 
 For each flow, the input is the concatenation of:
-  - Flow features      (8 dims)
-  - Queue features      (2 dims)
-  - Link features       (4 dims)
+  - Flow features      (7 dims)
+  - Queue features      (5 dims)
+  - Link features       (6 dims)
 
-Total input: 14 dims → LSTM → Linear → 1 scalar
+Total input: 18 dims -> LSTM -> Linear -> 1 scalar
 
 This serves as a simple baseline to demonstrate the superiority
 of the GNN attention-based architecture.
@@ -22,7 +22,7 @@ from typing import Optional, Tuple
 
 from wireless_gnn.model import FLOW_FEAT_DIM, QUEUE_FEAT_DIM, LINK_FEAT_DIM
 
-BASELINE_INPUT_DIM = FLOW_FEAT_DIM + QUEUE_FEAT_DIM + LINK_FEAT_DIM  # 14
+BASELINE_INPUT_DIM = FLOW_FEAT_DIM + QUEUE_FEAT_DIM + LINK_FEAT_DIM  # 18
 
 
 class BaselineLSTM(nn.Module):
@@ -80,7 +80,7 @@ class BaselineLSTM(nn.Module):
         f2q = torch.tensor(np.asarray(graph["flow_to_queue"]), dtype=torch.long, device=device)
         q2l = torch.tensor(np.asarray(graph["queue_to_link"]), dtype=torch.long, device=device)
 
-        flat = torch.cat([flow_feat, queue_feat[f2q], link_feat[q2l[f2q]]], dim=-1)  # [F, 14]
+        flat = torch.cat([flow_feat, queue_feat[f2q], link_feat[q2l[f2q]]], dim=-1)  # [F, 17]
 
         # LSTM: treat flows as a sequence [1, F, 14]
         lstm_out, _ = self.lstm(flat.unsqueeze(0))  # [1, F, hidden_dim]

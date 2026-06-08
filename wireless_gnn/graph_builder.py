@@ -11,6 +11,8 @@ Edges:
   Q → L : queue connects to its serving gNB link
   L → Q : link injects radio state back into queue  (reverse for attention)
   Q → F : queue feeds back to flow for QoS readout
+
+NOTE: throughput is the TARGET — it is NEVER included in the input features.
 """
 
 import math
@@ -34,6 +36,29 @@ def _parse_qsize_bytes(qsize_str: str) -> float:
     multipliers = {"KIB": 1024, "MIB": 1024**2, "GIB": 1024**3,
                    "KB": 1000, "MB": 1000**2, "GB": 1000**3}
     return val * multipliers.get(unit, 1.0)
+
+
+# Scheduling discipline → numerical encoding
+_SCHED_ENCODING = {
+    "PF":     1.0,
+    "MAXCI":  2.0,
+    "DRR":    3.0,
+    "MAXCI_MB": 4.0,
+    "ALLOCATOR_BESTFIT": 5.0,
+}
+
+def _encode_scheduler(sched_str: str) -> float:
+    """Encode scheduling discipline as a float (0 = unknown)."""
+    return _SCHED_ENCODING.get(str(sched_str).strip().upper(), 0.0)
+
+
+def _parse_tx_power_watts(power_str: str) -> float:
+    """Convert tx_power strings like '0.01W', '2W' to watts (float)."""
+    power_str = str(power_str).strip()
+    m = re.match(r"([\d.]+)\s*W?", power_str, re.IGNORECASE)
+    if not m:
+        return 0.0
+    return float(m.group(1))
 
 
 def _euclidean_distance(pos1: dict, pos2: dict) -> float:
@@ -66,23 +91,31 @@ def build_graph(snapshot: dict) -> Optional[dict]:
 
     Returned dict keys
     ------------------
-    flow_feat   : np.ndarray  [n_flows, 8]
+    flow_feat   : np.ndarray  [n_flows, 7]
                     0  packet_size          (bytes)
                     1  interval             (seconds between packets)
-                    2  throughput           (bps, observed)
-                    3  offered_load         (bps, = packet_size / interval — offered traffic)
-                    4  packet_loss          (ratio [0,1])
-                    5  harq_error_rate      (ratio [0,1])
-                    6  harq_tx_attempts     (average HARQ rounds per TB)
-                    7  delivery_ratio       (sentPacketToUpperLayer / receivedPacketFromLowerLayer)
-    queue_feat  : np.ndarray  [n_queues, 2]
-                    0  qsize_bytes          (bytes)
-                    1  mac_buffer_overflow  (bool 0/1 — buffer saturation flag)
-    link_feat   : np.ndarray  [n_links, 4]   (sinr_dl, sinr_ul, distance, speed)
+                    2  offered_load         (bps, = packet_size*8 / interval)
+                    3  delay                (seconds, e2e IP-layer delay)
+                    4  rlcDelay             (seconds, RLC-layer delay)
+                    5  packet_loss          (ratio [0,1])
+                    6  harqErrorRate        (ratio [0,1])
+    queue_feat  : np.ndarray  [n_queues, 5]
+                    0  qsize_bytes          (bytes, configured buffer size)
+                    1  n_flows_on_ue        (int, number of active flows on this UE)
+                    2  tx_power_watts       (float, serving gNB transmit power)
+                    3  n_ues_on_gnb         (int, number of UEs served by the same gNB)
+                    4  scheduling_disc      (encoded: PF=1, MAXCI=2, DRR=3, MAXCI_MB=4, BESTFIT=5)
+    link_feat   : np.ndarray  [n_links, 6]
+                    0  sinr_dl              (dB)
+                    1  sinr_ul              (dB)
+                    2  distance             (metres, UE↔gNB)
+                    3  speed                (m/s, UE mobility speed)
+                    4  cell_thr_dl          (bps, aggregate DL throughput of the cell)
+                    5  cell_thr_ul          (bps, aggregate UL throughput of the cell)
 
     flow_to_queue  : np.ndarray [n_flows]         flow_i → queue index
     queue_to_link  : np.ndarray [n_queues]         queue_i → link index
-    link_to_queue  : np.ndarray [n_links]          link_i → queue index  (same as above, reversed)
+    link_to_queue  : np.ndarray [n_links]          link_i → queue index
 
     target_delay       : np.ndarray [n_flows]
     target_throughput  : np.ndarray [n_flows]
@@ -170,29 +203,25 @@ def build_graph(snapshot: dict) -> Optional[dict]:
 
         pkt_size  = float(f.get("packet_size", 0))
         interval  = float(f.get("interval",    0))
-        tput      = float(f.get("throughput",  0))
 
         # Derived: offered load (bps) — avoids division by zero
         offered_load = (pkt_size * 8.0 / interval) if interval > 0 else 0.0
 
-        # Delivery ratio: packets delivered to app / packets received from MAC
-        # (may be absent in SC06–SC08 — defaults to 0)
-        rx_from_lower = float(f.get("receivedPacketFromLowerLayer", 0))
-        tx_to_upper   = float(f.get("sentPacketToUpperLayer",       0))
-        delivery_ratio = (tx_to_upper / rx_from_lower) if rx_from_lower > 0 else 0.0
+        # Delay metrics as INPUT features (causal — describe network state)
+        delay     = float(f.get("delay",    0))
+        rlc_delay = float(f.get("rlcDelay", 0))
 
         flow_feat_list.append([
-            pkt_size,
-            interval,
-            tput,
-            offered_load,
-            float(f.get("packet_loss",    0)),   # radio link loss ratio  (0 if absent)
-            float(f.get("harqErrorRate",  0)),   # PHY HARQ error rate    (0 if absent)
-            float(f.get("harqTxAttempts", 0)),   # avg HARQ rounds        (0 if absent)
-            delivery_ratio,                       # end-to-end delivery    (0 if absent)
+            pkt_size,                                # 0: config param
+            interval,                                # 1: config param
+            offered_load,                            # 2: derived from config
+            delay,                                   # 3: network state indicator
+            rlc_delay,                               # 4: network state indicator
+            float(f.get("packet_loss",    0)),       # 5: radio link loss ratio
+            float(f.get("harqErrorRate",  0)),       # 6: PHY HARQ error rate
         ])
         flow_to_queue_list.append(queue_idx_map[ue_int])
-        target_delay_list.append(float(f.get("delay", 0)) + float(f.get("rlcDelay", 0)))
+        target_delay_list.append(delay + rlc_delay)
         target_throughput_list.append(float(f.get("throughput", 0)))
 
     if not flow_feat_list:
@@ -207,24 +236,43 @@ def build_graph(snapshot: dict) -> Optional[dict]:
     queue_feat_list       = []
     queue_to_link_list    = []
 
+    # Pre-compute: count UEs per gNB (for contention feature)
+    gnb_ue_count = {}  # gnb_id → number of active UEs served
+    for ue_int in active_ue_ids:
+        ue_node = ue_info.get(ue_id_for_int[ue_int], {})
+        gnb_id = ue_node.get("serving_gnb", "none")
+        if gnb_id == "none" or gnb_id not in gnb_info:
+            gnb_id = next(iter(gnb_info), None)
+        if gnb_id:
+            gnb_ue_count[gnb_id] = gnb_ue_count.get(gnb_id, 0) + 1
+
     for ue_int in active_ue_ids:
         ue_id  = ue_id_for_int[ue_int]
         ue_node = ue_info.get(ue_id, {})
 
         ue_flows = [f for f in active_flows if _flow_ue_index(f["dst"]) == ue_int]
         qsize_bytes = _parse_qsize_bytes(ue_node.get("qsize", "10MiB"))
+        n_flows_on_ue = float(len(ue_flows))
 
-        # macBufferOverflow: 1 if any flow for this UE overflowed the MAC buffer
-        mac_overflow = float(
-            any(f.get("macBufferOverflow", 0) > 0 for f in ue_flows)
-        )
-
-        queue_feat_list.append([qsize_bytes, mac_overflow])
-
-        # Queue → Link
+        # Queue → Link (find the serving gNB)
         gnb_id = ue_node.get("serving_gnb", "none")
         if gnb_id == "none" or gnb_id not in gnb_info:
             gnb_id = next(iter(gnb_info), None)
+
+        # gNB-level features injected into queue
+        gnb_node = gnb_info.get(gnb_id, {}) if gnb_id else {}
+        tx_power = _parse_tx_power_watts(gnb_node.get("tx_power", "0W"))
+        n_ues_on_gnb = float(gnb_ue_count.get(gnb_id, 1))
+        sched_code = _encode_scheduler(gnb_node.get("scheduling_discipline", ""))
+
+        queue_feat_list.append([
+            qsize_bytes,        # 0: configured buffer size
+            n_flows_on_ue,      # 1: contention at UE level
+            tx_power,           # 2: serving cell tx power
+            n_ues_on_gnb,       # 3: contention at cell level
+            sched_code,         # 4: scheduling policy (PF=1, MAXCI=2, DRR=3, ...)
+        ])
+
         key = (ue_int, gnb_id)
         queue_to_link_list.append(link_idx_map.get(key, 0))
 
@@ -245,7 +293,18 @@ def build_graph(snapshot: dict) -> Optional[dict]:
         speed    = float(ue_node.get("speed", 0.0))
         distance = _euclidean_distance(ue_node, gnb_node) if gnb_node else 0.0
 
-        link_feat_list.append([sinr_dl, sinr_ul, distance, speed])
+        # Cell-level throughput (gNB aggregate — NOT per-flow)
+        cell_thr_dl = float(gnb_node.get("cell_thr_dl", 0.0))
+        cell_thr_ul = float(gnb_node.get("cell_thr_ul", 0.0))
+
+        link_feat_list.append([
+            sinr_dl,        # 0: downlink SINR (dB)
+            sinr_ul,        # 1: uplink SINR (dB)
+            distance,       # 2: UE-gNB distance (m)
+            speed,          # 3: UE mobility speed (m/s)
+            cell_thr_dl,    # 4: aggregate cell DL throughput (bps)
+            cell_thr_ul,    # 5: aggregate cell UL throughput (bps)
+        ])
         # Link maps back to the queue of its UE
         link_to_queue_list.append(queue_idx_map[ue_int])
 
@@ -254,9 +313,9 @@ def build_graph(snapshot: dict) -> Optional[dict]:
 
     return {
         # Features
-        "flow_feat"         : flow_feat,           # [n_flows, 8]
-        "queue_feat"        : queue_feat,          # [n_queues, 3]
-        "link_feat"         : link_feat,           # [n_links, 4]
+        "flow_feat"         : flow_feat,           # [n_flows, 7]
+        "queue_feat"        : queue_feat,          # [n_queues, 4]
+        "link_feat"         : link_feat,           # [n_links, 6]
         # Connectivity
         "flow_to_queue"     : flow_to_queue,       # [n_flows]     int
         "queue_to_link"     : queue_to_link,       # [n_queues]    int

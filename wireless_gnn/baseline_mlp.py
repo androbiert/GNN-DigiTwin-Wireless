@@ -5,11 +5,11 @@ A simple feed-forward MLP that predicts per-flow throughput
 WITHOUT using any graph structure or message passing.
 
 For each flow, the input is the concatenation of:
-  - Flow features      (8 dims)
-  - Queue features      (2 dims)  ← the queue this flow belongs to
-  - Link features       (4 dims)  ← the link associated with the flow's queue
+  - Flow features      (7 dims)
+  - Queue features      (5 dims)
+  - Link features       (6 dims)
 
-Total input: 14 dims → MLP → 1 scalar (throughput)
+Total input: 18 dims -> MLP -> 1 scalar
 
 This serves as a baseline to measure the added value of the GNN architecture.
 """
@@ -23,7 +23,7 @@ from wireless_gnn.model import FLOW_FEAT_DIM, QUEUE_FEAT_DIM, LINK_FEAT_DIM
 
 
 # Total input dimension per flow
-BASELINE_INPUT_DIM = FLOW_FEAT_DIM + QUEUE_FEAT_DIM + LINK_FEAT_DIM  # 8 + 2 + 4 = 14
+BASELINE_INPUT_DIM = FLOW_FEAT_DIM + QUEUE_FEAT_DIM + LINK_FEAT_DIM  # 7 + 5 + 6 = 18
 
 
 class BaselineMLP(nn.Module):
@@ -78,14 +78,14 @@ class BaselineMLP(nn.Module):
         For each flow, concatenate its own features with its queue's
         and link's features to create a flat input vector.
 
-        Returns: [n_flows, 14]
+        Returns: [n_flows, 17]
         """
         flow_feat  = torch.tensor(np.asarray(graph["flow_feat"]),
-                                  dtype=torch.float32, device=device)    # [F, 8]
+                                  dtype=torch.float32, device=device)    # [F, 7]
         queue_feat = torch.tensor(np.asarray(graph["queue_feat"]),
-                                  dtype=torch.float32, device=device)    # [Q, 2]
+                                  dtype=torch.float32, device=device)    # [Q, 4]
         link_feat  = torch.tensor(np.asarray(graph["link_feat"]),
-                                  dtype=torch.float32, device=device)    # [L, 4]
+                                  dtype=torch.float32, device=device)    # [L, 6]
 
         f2q = torch.tensor(np.asarray(graph["flow_to_queue"]),
                            dtype=torch.long, device=device)              # [F]
@@ -97,7 +97,7 @@ class BaselineMLP(nn.Module):
         link_per_flow  = link_feat[q2l[f2q]]                 # [F, 4]
 
         # Concatenate: [flow || queue || link]
-        flat = torch.cat([flow_feat, queue_per_flow, link_per_flow], dim=-1)  # [F, 14]
+        flat = torch.cat([flow_feat, queue_per_flow, link_per_flow], dim=-1)  # [F, 17]
         return flat
 
     def forward(
@@ -124,7 +124,7 @@ class BaselineMLP(nn.Module):
             dummy = torch.zeros(0, self.hidden_dim, device=device)
             return pred, dummy
 
-        flat_input = self._build_flat_input(graph, device)   # [F, 14]
+        flat_input = self._build_flat_input(graph, device)   # [F, 17]
 
         pred = self.mlp(flat_input).squeeze(-1)              # [F]
 

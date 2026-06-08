@@ -5,8 +5,8 @@ import numpy as np
 from tqdm import tqdm
 
 def clean_data():
-    src_dir = "Data/SC01/simulations"
-    dst_dir = "Data_cleaned/SC01/simulations"
+    src_dir = "Data/SC02/simulations"
+    dst_dir = "Data_cleaned/SC02/simulations"
     
     if not os.path.exists(src_dir):
         print(f"Source {src_dir} not found.")
@@ -71,7 +71,7 @@ def clean_data():
         with open(dst_path, 'w') as fp:
             json.dump(data, fp)
 
-    print("Done! Cleaned dataset is in Data_cleaned/SC01")
+    print("Done! Cleaned dataset is in Data_cleaned/SC02")
 
 if __name__ == "__main__":
     clean_data()

@@ -49,7 +49,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from wireless_gnn.model  import WirelessNetFermi
+from wireless_gnn.model import WirelessNetFermi
 from wireless_gnn.model2 import WirelessNetFermiV3
 from wireless_gnn.dataset import (
     WirelessDataset,

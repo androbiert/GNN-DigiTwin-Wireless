@@ -114,7 +114,7 @@ def main():
         description="Compare per-scenario GNN vs single MLP/LSTM baselines."
     )
     parser.add_argument("--data-dir", default="data_cleaned")
-    parser.add_argument("--gnn-checkpoint-dir", default="checkpoints",
+    parser.add_argument("--gnn-checkpoint-dir", default="checkpoint_fine",
                         help="GNN checkpoint directory (per-scenario models)")
     parser.add_argument("--mlp-checkpoint-dir", default="checkpoints_baseline",
                         help="MLP baseline checkpoint directory (single 'ALL' model)")
