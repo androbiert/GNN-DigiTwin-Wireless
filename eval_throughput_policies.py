@@ -25,6 +25,7 @@ def main():
     parser.add_argument("--data-dir", default="data_cleaned", help="Data directory (e.g. Data_cleaned)")
     parser.add_argument("--checkpoint-dir", default="checkpoints_fine", help="Checkpoints directory")
     parser.add_argument("--recache", action="store_true", help="Force re-scanning of scenarios (ignore cache)")
+    parser.add_argument("--scenario", default=None, help="Evaluate only this scenario (e.g. SC03). Default: all.")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -34,6 +35,14 @@ def main():
     print("Discovering scenarios...")
     all_configs = discover_scenarios(_project_root, data_dir=args.data_dir, validate=True, verbose=False, use_cache=not args.recache)
     groups = group_by_scenario(all_configs)
+
+    # Filter to requested scenario if specified
+    if args.scenario:
+        sc = args.scenario.upper()
+        if sc not in groups:
+            print(f"ERROR: Scenario '{sc}' not found. Available: {list(groups.keys())}")
+            sys.exit(1)
+        groups = {sc: groups[sc]}
 
     results = []
 
