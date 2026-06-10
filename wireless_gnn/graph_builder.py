@@ -314,7 +314,7 @@ def build_graph(snapshot: dict) -> Optional[dict]:
     return {
         # Features
         "flow_feat"         : flow_feat,           # [n_flows, 7]
-        "queue_feat"        : queue_feat,          # [n_queues, 4]
+        "queue_feat"        : queue_feat,          # [n_queues, 5]
         "link_feat"         : link_feat,           # [n_links, 6]
         # Connectivity
         "flow_to_queue"     : flow_to_queue,       # [n_flows]     int

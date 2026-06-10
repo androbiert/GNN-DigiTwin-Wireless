@@ -15,7 +15,7 @@ from typing import Optional, Tuple
 
 from wireless_gnn.model import FLOW_FEAT_DIM, QUEUE_FEAT_DIM, LINK_FEAT_DIM
 
-# We pad all node features to the max dimension (which is Flow: 8)
+# We pad all node features to the max dimension (which is Flow: 7)
 HOMOGENEOUS_FEAT_DIM = max(FLOW_FEAT_DIM, QUEUE_FEAT_DIM, LINK_FEAT_DIM)
 
 class SimpleGNNLayer(nn.Module):
@@ -148,7 +148,7 @@ class BaselineGNN(nn.Module):
         link_pad  = F.pad(link_feat,  (0, HOMOGENEOUS_FEAT_DIM - LINK_FEAT_DIM))
 
         # 2. Concatenate into a single node matrix
-        X = torch.cat([flow_pad, queue_pad, link_pad], dim=0) # [n_total, 8]
+        X = torch.cat([flow_pad, queue_pad, link_pad], dim=0) # [n_total, 7]
         X = self.node_emb(X) # [n_total, hidden_dim]
 
         # 3. Build edge list

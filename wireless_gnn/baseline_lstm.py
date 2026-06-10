@@ -80,7 +80,7 @@ class BaselineLSTM(nn.Module):
         f2q = torch.tensor(np.asarray(graph["flow_to_queue"]), dtype=torch.long, device=device)
         q2l = torch.tensor(np.asarray(graph["queue_to_link"]), dtype=torch.long, device=device)
 
-        flat = torch.cat([flow_feat, queue_feat[f2q], link_feat[q2l[f2q]]], dim=-1)  # [F, 17]
+        flat = torch.cat([flow_feat, queue_feat[f2q], link_feat[q2l[f2q]]], dim=-1)  # [F, 18]
 
         # LSTM: treat flows as a sequence [1, F, 14]
         lstm_out, _ = self.lstm(flat.unsqueeze(0))  # [1, F, hidden_dim]

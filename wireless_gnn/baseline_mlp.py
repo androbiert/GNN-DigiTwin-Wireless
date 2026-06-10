@@ -97,7 +97,7 @@ class BaselineMLP(nn.Module):
         link_per_flow  = link_feat[q2l[f2q]]                 # [F, 4]
 
         # Concatenate: [flow || queue || link]
-        flat = torch.cat([flow_feat, queue_per_flow, link_per_flow], dim=-1)  # [F, 17]
+        flat = torch.cat([flow_feat, queue_per_flow, link_per_flow], dim=-1)  # [F, 18]
         return flat
 
     def forward(
