@@ -1,13 +1,13 @@
 """
-eval_throughput_queuesize.py — Evaluate best model per scenario on each queue size for throughput.
+eval_throughput_power.py — Evaluate best model per scenario on each emission power level for throughput.
 
-Groups test data by queue_size (e.g. 50KiB, 100KiB, 2MiB, 10MiB) and evaluates
-the general per-scenario model on each queue size group separately.
+Groups test data by tx_power (e.g. 0.01W, 0.1W, 0.5W, 2W) and evaluates
+the general per-scenario model on each power group separately.
 
 Usage:
-  python eval_throughput_queuesize.py
-  python eval_throughput_queuesize.py --scenario SC01
-  python eval_throughput_queuesize.py --checkpoint-dir checkpoints_v3
+  python eval_throughput_power.py
+  python eval_throughput_power.py --scenario SC01
+  python eval_throughput_power.py --checkpoint-dir checkpoints_v3
 """
 
 import sys
@@ -15,7 +15,6 @@ import os
 import argparse
 import glob
 import json
-import re
 import torch
 import numpy as np
 from collections import defaultdict
@@ -33,20 +32,8 @@ from evaluate_models import (
 from wireless_gnn.dataset import build_scenario_datasets, collate_fn, WirelessDataset
 from wireless_gnn.scenario_registry import discover_scenarios, group_by_scenario, filter_for_target
 
-
-def _qsize_to_bytes(qsize_str: str) -> float:
-    """Convert queue size string to bytes for sorting (e.g. '50KiB' -> 51200)."""
-    m = re.match(r"([\d.]+)\s*(MiB|KiB|GiB)", qsize_str, re.IGNORECASE)
-    if not m:
-        return 0.0
-    val = float(m.group(1))
-    unit = m.group(2).upper()
-    multipliers = {"KIB": 1024, "MIB": 1024**2, "GIB": 1024**3}
-    return val * multipliers.get(unit, 1.0)
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate best model per scenario on each queue size for throughput.")
+    parser = argparse.ArgumentParser(description="Evaluate best model per scenario on each emission power level for throughput.")
     parser.add_argument("--data-dir", default="data_cleaned", help="Data directory (e.g. Data_cleaned)")
     parser.add_argument("--checkpoint-dir", default="checkpoints_v3", help="Checkpoints directory")
     parser.add_argument("--recache", action="store_true", help="Force re-scanning of scenarios (ignore cache)")
@@ -85,7 +72,7 @@ def main():
             continue
 
         print(f"\n{'='*70}")
-        print(f"Evaluating General Model for {sc_id} (Throughput by Queue Size)")
+        print(f"Evaluating General Model for {sc_id} (Throughput by Emission Power)")
         print(f"{'='*70}")
 
         # Load the general model
@@ -111,28 +98,28 @@ def main():
         else:
             print(f"[{sc_id}] WARNING: No normalizer in checkpoint, using recomputed one (may cause errors).")
 
-        # Now group the configs by queue size
-        qsize_folders = defaultdict(set)
+        # Now group the configs by emission power (tx_power)
+        power_folders = defaultdict(set)
         for c in tgt_cfgs:
-            qsize_folders[c.queue_size].add(c.folder_name)
+            power_folders[c.tx_power].add(c.folder_name)
 
-        # Evaluate on each queue size (sorted by actual size in bytes)
-        for qsize, folders in sorted(qsize_folders.items(), key=lambda x: _qsize_to_bytes(x[0])):
-            # Filter the test dataset for this queue size
-            qsize_graphs = [g for g in full_test_ds.graphs if g["config_folder"] in folders]
+        # Evaluate on each power level
+        for power, folders in sorted(power_folders.items(), key=lambda x: float(x[0].replace("W", ""))):
+            # Filter the test dataset for this power level
+            power_graphs = [g for g in full_test_ds.graphs if g["config_folder"] in folders]
 
-            if not qsize_graphs:
-                print(f"  [Q={qsize}] No test graphs found.")
+            if not power_graphs:
+                print(f"  [P={power}] No test graphs found.")
                 continue
 
-            print(f"  [Q={qsize}] Test graphs: {len(qsize_graphs)}")
+            print(f"  [P={power}] Test graphs: {len(power_graphs)}")
 
             # Predict
             all_pred = []
             all_true = []
 
-            q_test_ds = WirelessDataset(qsize_graphs, normalizer=normalizer)
-            loader = DataLoader(q_test_ds, batch_size=64, shuffle=False, collate_fn=collate_fn)
+            pol_test_ds = WirelessDataset(power_graphs, normalizer=normalizer)
+            loader = DataLoader(pol_test_ds, batch_size=64, shuffle=False, collate_fn=collate_fn)
 
             with torch.no_grad():
                 for batch in loader:
@@ -148,18 +135,18 @@ def main():
 
                 res_entry = {
                     "Scenario": sc_id,
-                    "QueueSize": qsize,
+                    "Power": power,
                     "MAE": float(metrics["MAE"]),
                     "RMSE": float(metrics["RMSE"]),
                     "MAPE": float(metrics["MAPE (%)"]),
-                    "R2": float(metrics["R2"]),
+                    "R2": float(metrics["R²"]),
                 }
                 results.append(res_entry)
 
                 scale = 1e-3
-                print(f"    -> MAE: {metrics['MAE'] * scale:.2f} kbps | RMSE: {metrics['RMSE'] * scale:.2f} kbps | MAPE: {metrics['MAPE (%)']:.2f}% | R2: {metrics['R2']:.4f}")
+                print(f"    -> MAE: {metrics['MAE'] * scale:.2f} kbps | RMSE: {metrics['RMSE'] * scale:.2f} kbps | MAPE: {metrics['MAPE (%)']:.2f}% | R²: {metrics['R²']:.4f}")
 
-                print(f"    [Sample Comparison for Q={qsize}]")
+                print(f"    [Sample Comparison for P={power}]")
                 num_samples_to_print = min(30, len(true))
                 sample_indices = np.random.choice(len(true), num_samples_to_print, replace=False)
                 print(f"    {'Index':<8} {'GT (kbps)':>12} {'Pred (kbps)':>12} {'Abs Err (kbps)':>14} {'Rel Err (%)':>12}")
@@ -173,15 +160,15 @@ def main():
                 print("\n")
 
     print(f"\n{'='*70}")
-    print(f"FINAL SUMMARY - Throughput Evaluation Across Queue Sizes")
+    print(f"FINAL SUMMARY - Throughput Evaluation Across Emission Power Levels")
     print(f"{'='*70}")
-    print(f"{'Scenario':<10} {'Queue Size':<12} {'MAE (kbps)':>12} {'RMSE (kbps)':>12} {'MAPE (%)':>10} {'R2':>10}")
+    print(f"{'Scenario':<10} {'Power':<12} {'MAE (kbps)':>12} {'RMSE (kbps)':>12} {'MAPE (%)':>10} {'R²':>10}")
     print("-" * 70)
     for r in results:
-        print(f"{r['Scenario']:<10} {r['QueueSize']:<12} {r['MAE']*1e-3:>12.2f} {r['RMSE']*1e-3:>12.2f} {r['MAPE']:>10.2f} {r['R2']:>10.4f}")
+        print(f"{r['Scenario']:<10} {r['Power']:<12} {r['MAE']*1e-3:>12.2f} {r['RMSE']*1e-3:>12.2f} {r['MAPE']:>10.2f} {r['R2']:>10.4f}")
 
     # Save results to JSON
-    out_file = "evaluation_throughput_queuesize.json"
+    out_file = "evaluation_throughput_power.json"
     with open(out_file, "w") as f:
         json.dump(results, f, indent=4)
     print(f"\nResults saved to {out_file}")
