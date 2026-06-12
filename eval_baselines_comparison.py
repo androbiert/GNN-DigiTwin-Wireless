@@ -171,10 +171,7 @@ def main():
         # Check GNN checkpoint
         gnn_dir = os.path.join(args.gnn_checkpoint_dir, sc_id, args.target)
 
-        # Force epoch 10 for SC07 only
-        forced_epoch = 10 if sc_id.upper() == "SC07" else args.epoch
-
-        gnn_ckpt_path = get_checkpoint_path(gnn_dir, forced_epoch)
+        gnn_ckpt_path = get_checkpoint_path(gnn_dir, args.epoch)
 
         if not os.path.exists(gnn_ckpt_path):
             print(f"\n[{sc_id}] No GNN checkpoint at {gnn_ckpt_path}, skipping.")
