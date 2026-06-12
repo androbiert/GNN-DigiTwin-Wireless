@@ -129,7 +129,7 @@ def main():
                 project_root   = _project_root,
                 hidden_dim     = args.hidden_dim,
                 num_heads      = 4,
-                iterations     = 8,
+                iterations     = 3,
                 dropout        = args.dropout,
                 epochs         = args.epochs,
                 lr             = args.lr,
