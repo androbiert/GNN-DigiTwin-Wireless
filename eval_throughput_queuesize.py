@@ -152,12 +152,12 @@ def main():
                     "MAE": float(metrics["MAE"]),
                     "RMSE": float(metrics["RMSE"]),
                     "MAPE": float(metrics["MAPE (%)"]),
-                    "R2": float(metrics["R2"]),
+                    "R2": float(metrics["R²"]),
                 }
                 results.append(res_entry)
 
                 scale = 1e-3
-                print(f"    -> MAE: {metrics['MAE'] * scale:.2f} kbps | RMSE: {metrics['RMSE'] * scale:.2f} kbps | MAPE: {metrics['MAPE (%)']:.2f}% | R2: {metrics['R2']:.4f}")
+                print(f"    -> MAE: {metrics['MAE'] * scale:.2f} kbps | RMSE: {metrics['RMSE'] * scale:.2f} kbps | MAPE: {metrics['MAPE (%)']:.2f}% | R²: {metrics['R²']:.4f}")
 
                 print(f"    [Sample Comparison for Q={qsize}]")
                 num_samples_to_print = min(30, len(true))
