@@ -1,17 +1,17 @@
 """
-train_baselines.py — Train MLP and LSTM Baselines on ALL Scenarios Combined
+train_baselines.py — Train MLP/LSTM/GNN Baselines
 
-Trains a SINGLE baseline model (MLP or LSTM) on data pooled from ALL scenarios,
-then evaluation can be done per-scenario to compare with per-scenario GNN models.
+Trains baseline models on data pooled from ALL scenarios (default),
+or on a SINGLE scenario if --scenario is specified.
 
 Usage:
   # Train MLP baseline on all scenarios
   python train_baselines.py --model baseline --target throughput --epochs 50
 
-  # Train LSTM baseline on all scenarios
-  python train_baselines.py --model lstm --target throughput --epochs 50
+  # Train LSTM baseline on a specific scenario
+  python train_baselines.py --model lstm --scenario SC01 --target throughput --epochs 50
 
-  # Train both
+  # Train all baselines on all scenarios
   python train_baselines.py --model all --target throughput --epochs 50
 """
 
@@ -35,8 +35,10 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Train MLP/LSTM baselines on ALL scenarios combined",
+        description="Train MLP/LSTM baselines on ALL scenarios or a specific one",
     )
+    parser.add_argument("--scenario", default=None,
+                        help="Train on a specific scenario (e.g. SC01). Default: ALL scenarios combined.")
     parser.add_argument("--model", default="all", choices=["baseline", "lstm", "baseline_gnn", "all"],
                         help="'baseline' (MLP), 'lstm', 'baseline_gnn', or 'all' (all of them)")
     parser.add_argument("--target", default="throughput", choices=["delay", "throughput"],
@@ -60,9 +62,9 @@ def main():
 
     args = parser.parse_args()
 
-    # ── Discover ALL scenarios ────────────────────────────────────────────── #
+    # ── Discover scenarios ─────────────────────────────────────────────────── #
     print("\n" + "=" * 70)
-    print("  DISCOVERING ALL SCENARIOS")
+    print("  DISCOVERING SCENARIOS")
     print("=" * 70)
 
     all_configs = discover_scenarios(
@@ -73,7 +75,20 @@ def main():
 
     groups = group_by_scenario(all_configs)
 
-    # Pool ALL data paths from all scenarios
+    # Filter to requested scenario if specified
+    if args.scenario:
+        sc = args.scenario.upper()
+        if sc not in groups:
+            print(f"ERROR: Scenario '{sc}' not found. Available: {list(groups.keys())}")
+            sys.exit(1)
+        groups = {sc: groups[sc]}
+        scenario_label = sc
+        print(f"\n  Training on scenario: {sc}")
+    else:
+        scenario_label = "ALL"
+        print(f"\n  Training on ALL scenarios combined")
+
+    # Pool data paths
     all_data_paths = []
     scenario_count = 0
     for sc_id, cfgs in groups.items():
@@ -102,13 +117,13 @@ def main():
     # ── Train each baseline ───────────────────────────────────────────────── #
     for model_name, model_cls, ckpt_dir in models_to_train:
         print(f"\n{'#'*70}")
-        print(f"  TRAINING: {model_cls.__name__} on ALL scenarios ({args.target})")
+        print(f"  TRAINING: {model_cls.__name__} on {scenario_label} ({args.target})")
         print(f"  Checkpoint dir: {ckpt_dir}")
         print(f"{'#'*70}")
 
         try:
             result = train_scenario(
-                scenario_id    = "ALL",
+                scenario_id     = scenario_label,
                 target         = args.target,
                 data_paths     = all_data_paths,
                 project_root   = _project_root,
@@ -130,7 +145,7 @@ def main():
 
             # Plots
             plot_dir = os.path.join(result["ckpt_dir"], "plots")
-            plot_loss_curve(result["history"], f"ALL_{model_name}", args.target, plot_dir)
+            plot_loss_curve(result["history"], f"{scenario_label}_{model_name}", args.target, plot_dir)
 
             device = next(result["model"].parameters()).device
             test_results = []
@@ -138,7 +153,7 @@ def main():
                 r = predict(result["model"], graph, result["normalizer"], device)
                 test_results.append(r)
             if test_results:
-                plot_scatter(test_results, f"ALL_{model_name}", args.target, plot_dir)
+                plot_scatter(test_results, f"{scenario_label}_{model_name}", args.target, plot_dir)
 
             print(f"\n✅ {model_cls.__name__} training complete!")
             print(f"   Checkpoint: {result['ckpt_dir']}/best.pt")
