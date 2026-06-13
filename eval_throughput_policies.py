@@ -131,12 +131,13 @@ def main():
                     "RMSE": float(metrics["RMSE"]),
                     "MAPE": float(metrics["MAPE (%)"]),
                     "R2": float(metrics["R²"]),
+                    "Acc10": float(metrics["Acc@10%"]),
                     "Acc20": float(metrics["Acc@20%"])
                 }
                 results.append(res_entry)
                 
                 scale = 1e-3
-                print(f"    -> MAE: {metrics['MAE'] * scale:.2f} kbps | RMSE: {metrics['RMSE'] * scale:.2f} kbps | MAPE: {metrics['MAPE (%)']:.2f}% | R²: {metrics['R²']:.4f} | Acc@20: {metrics['Acc@20%']:.1f}%")
+                print(f"    -> MAE: {metrics['MAE'] * scale:.2f} kbps | RMSE: {metrics['RMSE'] * scale:.2f} kbps | MAPE: {metrics['MAPE (%)']:.2f}% | R²: {metrics['R²']:.4f} | Acc@10: {metrics['Acc@10%']:.1f}% | Acc@20: {metrics['Acc@20%']:.1f}%")
                 
                 print(f"    [Sample Comparison for {policy}]")
                 num_samples_to_print = min(30, len(true))
@@ -154,10 +155,10 @@ def main():
     print(f"\n{'='*70}")
     print(f"FINAL SUMMARY - Throughput Evaluation Across Policies")
     print(f"{'='*70}")
-    print(f"{'Scenario':<10} {'Policy':<12} {'MAE (kbps)':>12} {'RMSE (kbps)':>12} {'MAPE (%)':>10} {'R²':>10} {'Acc@20':>10}")
-    print("-" * 82)
+    print(f"{'Scenario':<10} {'Policy':<12} {'MAE (kbps)':>12} {'RMSE (kbps)':>12} {'MAPE (%)':>10} {'R²':>10} {'Acc@10':>9} {'Acc@20':>9}")
+    print("-" * 92)
     for r in results:
-        print(f"{r['Scenario']:<10} {r['Policy']:<12} {r['MAE']*1e-3:>12.2f} {r['RMSE']*1e-3:>12.2f} {r['MAPE']:>10.2f} {r['R2']:>10.4f} {r['Acc20']:>9.1f}%")
+        print(f"{r['Scenario']:<10} {r['Policy']:<12} {r['MAE']*1e-3:>12.2f} {r['RMSE']*1e-3:>12.2f} {r['MAPE']:>10.2f} {r['R2']:>10.4f} {r['Acc10']:>8.1f}% {r['Acc20']:>8.1f}%")
     
     # Save results to JSON
     out_file = "evaluation_throughput_policies.json"
