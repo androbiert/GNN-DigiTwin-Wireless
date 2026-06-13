@@ -47,10 +47,14 @@ def main():
     # Load dataset to get graphs of varying sizes
     print("Loading dataset to extract graphs...")
     # Find all data.json for this scenario
-    data_paths = glob.glob(os.path.join(args.data_dir, sc, "simulations", "*", "data.json"))
+    data_paths = sorted(glob.glob(os.path.join(args.data_dir, sc, "simulations", "*", "data.json")))
     if not data_paths:
         print(f"ERROR: No data files found for {sc} in {args.data_dir}")
         sys.exit(1)
+        
+    # Restrict to only the first configuration (e.g. 01)*)
+    data_paths = [data_paths[0]]
+    print(f"Using only the first configuration: {data_paths[0]}")
         
     _, _, test_ds, normalizer = build_scenario_datasets(
         data_paths=data_paths,
