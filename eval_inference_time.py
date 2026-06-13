@@ -22,7 +22,7 @@ from wireless_gnn.dataset import build_scenario_datasets, collate_fn
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Inference Time Scaling of the Model.")
     parser.add_argument("--data-dir", default="data_cleaned", help="Data directory (e.g. data_cleaned)")
-    parser.add_argument("--checkpoint-dir", default="checkpoints", help="Checkpoints directory")
+    parser.add_argument("--checkpoint-dir", default="checkpoints_v3", help="Checkpoints directory")
     parser.add_argument("--scenario", default="SC03", help="Scenario to use for fetching varying sized graphs")
     parser.add_argument("--target", default="throughput", help="Target (delay or throughput)")
     args = parser.parse_args()
