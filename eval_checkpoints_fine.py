@@ -91,6 +91,10 @@ def predict_adapted(model, graph, normalizer, device, old_dims):
     model.eval()
     adapted_graph = adapt_graph(graph, old_dims)
     
+    # Normalize after adapting dimensions
+    if normalizer is not None:
+        adapted_graph = normalizer.normalize(adapted_graph)
+        
     pred, _ = model(adapted_graph)
     
     # Convert to physical values
@@ -167,7 +171,8 @@ def main():
 
         print(f"\n  [{policy}] Test graphs: {len(policy_graphs)}")
         
-        pol_test_ds = WirelessDataset(policy_graphs, normalizer=normalizer)
+        # Disable normalizer here to avoid shape crashes; we normalize inside predict_adapted
+        pol_test_ds = WirelessDataset(policy_graphs, normalizer=None)
         loader = DataLoader(pol_test_ds, batch_size=64, shuffle=False, collate_fn=collate_fn)
 
         all_pred, all_true = [], []

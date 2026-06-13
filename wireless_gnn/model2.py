@@ -1,5 +1,5 @@
 """
-model2.py — WirelessNet-Fermi v3: Enhanced Architecture
+model.py — WirelessNet-Fermi v3: Enhanced Architecture
 
 Same graph structure and attention mechanisms as v2, but with:
   1. LayerNorm after every GRU update  (stabilises deep message passing)
