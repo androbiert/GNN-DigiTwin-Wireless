@@ -106,6 +106,7 @@ def main():
             # Predict
             all_pred = []
             all_true = []
+            all_times = []
             
             # We must use normalizer.normalize(g) manually or wrap in a temporary WirelessDataset
             from wireless_gnn.dataset import WirelessDataset
@@ -115,14 +116,18 @@ def main():
             with torch.no_grad():
                 for batch in loader:
                     for graph in batch:
-                        pred_phys, true_phys, _, _ = predict_with_timing(model, graph, normalizer, device)
+                        pred_phys, true_phys, elapsed, _ = predict_with_timing(model, graph, normalizer, device)
                         all_pred.append(pred_phys)
                         all_true.append(true_phys)
+                        # We ignore the very first warmup run (if any), but predict_with_timing already handles a warmup internally.
+                        all_times.append(elapsed)
             
             if all_pred:
                 pred = np.concatenate(all_pred)
                 true = np.concatenate(all_true)
                 metrics = compute_metrics(pred, true)
+                
+                avg_infer_ms = (sum(all_times) / len(all_times)) * 1000.0 if all_times else 0.0
                 
                 res_entry = {
                     "Scenario": sc_id,
@@ -133,12 +138,13 @@ def main():
                     "SMAPE": float(metrics["SMAPE (%)"]),
                     "R2": float(metrics["R²"]),
                     "Acc10": float(metrics["Acc@10%"]),
-                    "Acc20": float(metrics["Acc@20%"])
+                    "Acc20": float(metrics["Acc@20%"]),
+                    "InferTime_ms": float(avg_infer_ms)
                 }
                 results.append(res_entry)
                 
                 scale = 1e-3
-                print(f"    -> MAE: {metrics['MAE'] * scale:.2f} kbps | RMSE: {metrics['RMSE'] * scale:.2f} kbps | MAPE: {metrics['MAPE (%)']:.2f}% | SMAPE: {metrics['SMAPE (%)']:.2f}% | R²: {metrics['R²']:.4f} | Acc@10: {metrics['Acc@10%']:.1f}% | Acc@20: {metrics['Acc@20%']:.1f}%")
+                print(f"    -> MAE: {metrics['MAE'] * scale:.2f} kbps | RMSE: {metrics['RMSE'] * scale:.2f} kbps | MAPE: {metrics['MAPE (%)']:.2f}% | SMAPE: {metrics['SMAPE (%)']:.2f}% | R²: {metrics['R²']:.4f} | Acc@10: {metrics['Acc@10%']:.1f}% | Acc@20: {metrics['Acc@20%']:.1f}% | Time: {avg_infer_ms:.2f} ms/graph")
                 
                 print(f"    [Sample Comparison for {policy}]")
                 num_samples_to_print = min(30, len(true))
@@ -156,10 +162,10 @@ def main():
     print(f"\n{'='*70}")
     print(f"FINAL SUMMARY - Throughput Evaluation Across Policies")
     print(f"{'='*70}")
-    print(f"{'Scenario':<10} {'Policy':<12} {'MAE (kbps)':>12} {'RMSE (kbps)':>12} {'MAPE (%)':>10} {'SMAPE (%)':>11} {'R²':>10} {'Acc@10':>9} {'Acc@20':>9}")
-    print("-" * 105)
+    print(f"{'Scenario':<10} {'Policy':<12} {'MAE (kbps)':>12} {'RMSE (kbps)':>12} {'MAPE (%)':>10} {'SMAPE (%)':>11} {'R²':>10} {'Acc@10':>9} {'Acc@20':>9} {'Time(ms)':>9}")
+    print("-" * 115)
     for r in results:
-        print(f"{r['Scenario']:<10} {r['Policy']:<12} {r['MAE']*1e-3:>12.2f} {r['RMSE']*1e-3:>12.2f} {r['MAPE']:>10.2f} {r['SMAPE']:>11.2f} {r['R2']:>10.4f} {r['Acc10']:>8.1f}% {r['Acc20']:>8.1f}%")
+        print(f"{r['Scenario']:<10} {r['Policy']:<12} {r['MAE']*1e-3:>12.2f} {r['RMSE']*1e-3:>12.2f} {r['MAPE']:>10.2f} {r['SMAPE']:>11.2f} {r['R2']:>10.4f} {r['Acc10']:>8.1f}% {r['Acc20']:>8.1f}% {r['InferTime_ms']:>6.2f} ms")
     
     # Save results to JSON
     out_file = "evaluation_throughput_policies.json"
