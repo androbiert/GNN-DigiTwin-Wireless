@@ -661,7 +661,7 @@ Examples:
   python train_scenarios.py --dry-run
   python train_scenarios.py --target delay --epochs 50
   python train_scenarios.py --target all --epochs 50
-  python train_scenarios.py --scenario SC01 --target delay --epochs 30
+  python train_scenarios.py --scenario SC01 --target throughput --epochs 20 --split-by-policy
         """,
     )
     parser.add_argument("--target", default="all", choices=["delay", "throughput", "all"],

@@ -109,6 +109,7 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate fine checkpoints with automatic feature dimension patching.")
     parser.add_argument("--data-dir", default="data_cleaned", help="Data directory")
     parser.add_argument("--checkpoint-dir", default="checkpoints_fine", help="Checkpoints directory")
+    parser.add_argument("--checkpoint-name", default="best.pt", help="Specific checkpoint file to load (e.g. epoch_008_mape_0.05.pt)")
     parser.add_argument("--scenario", default="SC03", help="Scenario to evaluate")
     args = parser.parse_args()
 
@@ -129,13 +130,14 @@ def main():
         print("No throughput configs found.")
         sys.exit(1)
 
-    ckpt_path = os.path.join(args.checkpoint_dir, sc, "throughput", "best.pt")
+    ckpt_path = os.path.join(args.checkpoint_dir, sc, "throughput", args.checkpoint_name)
     if not os.path.exists(ckpt_path):
         print(f"No checkpoint found at {ckpt_path}")
         sys.exit(1)
 
     print(f"\n{'='*70}")
     print(f"Evaluating General Model for {sc} (Throughput) with Adaptive Loading")
+    print(f"Checkpoint File: {args.checkpoint_name}")
     print(f"{'='*70}")
 
     model, ckpt, old_dims = load_old_checkpoint(ckpt_path, device)
