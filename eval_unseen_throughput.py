@@ -161,8 +161,8 @@ def main():
     )
     parser.add_argument(
         "--checkpoint",
-        default="checkpoints/SC01/throughput/best.pt",
-        help="Path to SC01 throughput checkpoint (default: checkpoints/SC01/throughput/best.pt)",
+        default="checkpoints_v3/SC01/throughput/best.pt",
+        help="Path to SC01 throughput checkpoint (default: checkpoints_v3/SC01/throughput/best.pt)",
     )
     parser.add_argument(
         "--batch-size",
