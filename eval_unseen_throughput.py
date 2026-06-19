@@ -9,7 +9,7 @@ The unseen files encode different network configurations in their filename:
 
 Usage:
   python eval_unseen_throughput.py
-  python eval_unseen_throughput.py --checkpoint checkpoints_fine/SC01/throughput/best.pt
+  python eval_unseen_throughput.py --checkpoint checkpoints_v3/SC01/throughput/best.pt
   python eval_unseen_throughput.py --unseen-dir GNN_UNSEEN_cleaned --checkpoint checkpoints/SC01/throughput/best.pt
 """
 
