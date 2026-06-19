@@ -21,6 +21,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 _project_root = os.path.dirname(os.path.abspath(__file__))
 if _project_root not in sys.path:
@@ -72,7 +73,7 @@ def run_eval(model, loader, normalizer, device):
     all_true = []
     model.eval()
     with torch.no_grad():
-        for batch in loader:
+        for batch in tqdm(loader, desc="Evaluating", leave=False):
             for graph in batch:
                 pred_phys, true_phys, _, _ = predict_with_timing(
                     model, graph, normalizer, device
@@ -167,7 +168,7 @@ def main():
     # Fix seed for reproducible splitting
     random.seed(42)
     
-    for f in unseen_files:
+    for f in tqdm(unseen_files, desc="Loading unseen configurations"):
         cfg = parse_unseen_filename(f)
         cfg_str = config_label(cfg)
         graphs = load_unseen_graphs(f)
@@ -180,7 +181,7 @@ def main():
         
         train_graphs.extend(graphs[:n_train])
         test_graphs.extend(graphs[n_train:])
-        print(f"  • {os.path.basename(f)} ({cfg_str}) -> {n_train} train graphs, {len(graphs)-n_train} test graphs")
+        tqdm.write(f"  • {os.path.basename(f)} ({cfg_str}) -> {n_train} train graphs, {len(graphs)-n_train} test graphs")
 
     print(f"\nTotal Train Snapshots: {len(train_graphs)}")
     print(f"Total Test Snapshots:  {len(test_graphs)}")
@@ -227,7 +228,8 @@ def main():
         n_batches = 0
         
         t0 = time.time()
-        for batch in train_loader:
+        pbar = tqdm(train_loader, desc=f"  Epoch {epoch:02d}/{args.epochs:02d}", leave=False)
+        for batch in pbar:
             optimizer.zero_grad()
             batch_loss = 0.0
             n_flows = 0
@@ -257,6 +259,7 @@ def main():
                 optimizer.step()
                 epoch_loss += batch_loss.item()
                 n_batches += 1
+                pbar.set_postfix(loss=f"{epoch_loss / n_batches:.4f}")
                 
         elapsed = time.time() - t0
         avg_loss = epoch_loss / max(n_batches, 1)
