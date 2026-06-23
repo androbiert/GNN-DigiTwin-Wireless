@@ -313,9 +313,30 @@ def train_distilled(args):
         optimizer, T_0=10, T_mult=2, eta_min=1e-6
     )
 
+    start_epoch = 1
     best_val_mape = float("inf")
-    best_state = None
+    best_state = copy.deepcopy(student.state_dict())
     no_improve = 0
+
+    latest_ckpt = os.path.join(ckpt_dir, "latest.pt")
+    if args.resume and os.path.isfile(latest_ckpt):
+        print(f"★ Resuming from latest checkpoint: {latest_ckpt}")
+        ckpt_data = torch.load(latest_ckpt, map_location=device, weights_only=False)
+        student.load_state_dict(ckpt_data["student"])
+        proj.load_state_dict(ckpt_data["proj"])
+        optimizer.load_state_dict(ckpt_data["optimizer"])
+        if "scheduler" in ckpt_data and scheduler is not None:
+            scheduler.load_state_dict(ckpt_data["scheduler"])
+        start_epoch = ckpt_data.get("epoch", 0) + 1
+        best_val_mape = ckpt_data.get("best_val_mape", float("inf"))
+        no_improve = ckpt_data.get("no_improve", 0)
+
+        if os.path.isfile(best_ckpt):
+            best_data = torch.load(best_ckpt, map_location="cpu", weights_only=False)
+            if "student" in best_data:
+                best_state = best_data["student"]
+            else:
+                best_state = copy.deepcopy(student.state_dict())
 
     print(f"Distillation training loop starting...")
     print(f"Loss weights: α(hard)={args.alpha}, β(soft)={args.beta}, "
@@ -324,7 +345,7 @@ def train_distilled(args):
           f"{'Val MAPE':>12}  {'Best?':>6}  {'LR':>10}")
     print("-" * 72)
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         t0 = time.time()
 
         train_loss, train_mape = run_distill_epoch(
@@ -360,6 +381,19 @@ def train_distilled(args):
             }, best_ckpt)
         else:
             no_improve += 1
+
+        # Save latest checkpoint for resuming
+        latest_ckpt = os.path.join(ckpt_dir, "latest.pt")
+        torch.save({
+            "epoch": epoch,
+            "student": student.state_dict(),
+            "proj": proj.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict() if scheduler is not None else None,
+            "best_val_mape": best_val_mape,
+            "no_improve": no_improve,
+            "config": vars(args),
+        }, latest_ckpt)
 
         flag = "★" if is_best else ""
         print(f"{epoch:>6}  {train_loss:>12.4f}  {train_mape:>12.4%}  "
@@ -415,6 +449,8 @@ if __name__ == "__main__":
                         help="Random seed for splitting scenario dataset")
     parser.add_argument("--subsample", type=float, default=1.0,
                         help="Subsample ratio of snapshots (e.g., 0.2 to use 20%% of data)")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume training from the latest checkpoint if one exists")
 
     # Loss weights
     parser.add_argument("--alpha", type=float, default=0.3,
