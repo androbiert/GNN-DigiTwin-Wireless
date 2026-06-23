@@ -36,7 +36,9 @@ from tqdm import tqdm
 
 from wireless_gnn.model2 import WirelessNetFermiV3
 from wireless_gnn.student_film import WirelessNetFermiStudent
-from wireless_gnn.dataset import FeatureNormalizer, build_datasets, collate_fn
+from wireless_gnn.dataset import FeatureNormalizer, build_datasets, build_scenario_datasets, collate_fn
+from wireless_gnn.scenario_registry import discover_scenarios, filter_for_target
+
 
 
 # --------------------------------------------------------------------------- #
@@ -172,10 +174,56 @@ def train_distilled(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
+    # ── Resolve teacher checkpoint path if not provided ───────────────────── #
+    if args.teacher_ckpt is None:
+        if args.scenario:
+            args.teacher_ckpt = os.path.join("checkpoints_v3", args.scenario, args.target, "best.pt")
+            print(f"Auto-resolved teacher checkpoint to: {args.teacher_ckpt}")
+        else:
+            raise ValueError("Please specify --teacher_ckpt or --scenario to locate the teacher model.")
+
+    # ── Checkpoint directory ──────────────────────────────────────────────── #
+    if args.scenario:
+        ckpt_dir = os.path.join(args.checkpoint_dir, args.scenario, args.target)
+    else:
+        ckpt_dir = os.path.join(args.checkpoint_dir, f"distilled_film_{args.target}")
+    os.makedirs(ckpt_dir, exist_ok=True)
+    best_ckpt = os.path.join(ckpt_dir, "best.pt")
+
     # ── Datasets ──────────────────────────────────────────────────────────── #
-    train_ds, val_ds, test_ds, normalizer = build_datasets(
-        args.root, target=args.target
-    )
+    if args.scenario:
+        all_configs = discover_scenarios(
+            args.root,
+            data_dir=args.data_dir,
+            validate=True,
+            verbose=True,
+            use_cache=True,
+        )
+        sc = args.scenario.upper()
+        scenario_configs = [c for c in all_configs if c.scenario_id.upper() == sc]
+        if not scenario_configs:
+            raise ValueError(f"Scenario '{sc}' not found. Available: {sorted(list(set(c.scenario_id for c in all_configs)))}")
+
+        valid_configs = filter_for_target(scenario_configs, args.target)
+        if not valid_configs:
+            raise ValueError(f"No valid configs for scenario {sc} and target {args.target}")
+
+        data_paths = [c.data_path for c in valid_configs]
+        print(f"[{sc}/{args.target}] Training on {len(data_paths)} scenario data files.")
+
+        train_ds, val_ds, test_ds, normalizer = build_scenario_datasets(
+            data_paths=data_paths,
+            scenario_id=sc,
+            target=args.target,
+            seed=args.seed,
+            subsample_ratio=args.subsample,
+            split_dir=ckpt_dir,
+        )
+    else:
+        train_ds, val_ds, test_ds, normalizer = build_datasets(
+            args.root, target=args.target
+        )
+
     train_loader = DataLoader(
         train_ds, batch_size=1, shuffle=True, collate_fn=collate_fn
     )
@@ -234,11 +282,6 @@ def train_distilled(args):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=10, T_mult=2, eta_min=1e-6
     )
-
-    # ── Checkpoint directory ──────────────────────────────────────────────── #
-    ckpt_dir = os.path.join(args.checkpoint_dir, f"distilled_film_{args.target}")
-    os.makedirs(ckpt_dir, exist_ok=True)
-    best_ckpt = os.path.join(ckpt_dir, "best.pt")
 
     best_val_mape = float("inf")
     best_state = None
@@ -323,9 +366,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Knowledge Distillation — FiLM & Highway Student"
     )
-    parser.add_argument("--teacher_ckpt", required=True,
-                        help="Path to pretrained teacher best.pt")
-    parser.add_argument("--target", required=True,
+    parser.add_argument("--teacher_ckpt", default=None,
+                        help="Path to pretrained teacher best.pt. Defaults to checkpoints_v3/{scenario}/{target}/best.pt if --scenario is specified.")
+    parser.add_argument("--scenario", default=None,
+                        help="Scenario identifier to train on (e.g. SC01, SC02). Default: None (legacy all).")
+    parser.add_argument("--data_dir", default="data_cleaned",
+                        help="Data directory containing scenario folders (default: data_cleaned)")
+    parser.add_argument("--target", default="throughput",
                         choices=["delay", "throughput"])
     parser.add_argument("--root", default=".",
                         help="Project root path")
@@ -333,7 +380,11 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--patience", type=int, default=15)
-    parser.add_argument("--checkpoint_dir", default="checkpoints")
+    parser.add_argument("--checkpoint_dir", default="checkpoints_distilled_film_throughput")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed for splitting scenario dataset")
+    parser.add_argument("--subsample", type=float, default=1.0,
+                        help="Subsample ratio of snapshots (e.g., 0.2 to use 20%% of data)")
 
     # Loss weights
     parser.add_argument("--alpha", type=float, default=0.3,
