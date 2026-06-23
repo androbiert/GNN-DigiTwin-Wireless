@@ -177,7 +177,14 @@ def train_distilled(args):
     # ── Resolve teacher checkpoint path if not provided ───────────────────── #
     if args.teacher_ckpt is None:
         if args.scenario:
-            args.teacher_ckpt = os.path.join("checkpoints_v3", args.scenario, args.target, "best.pt")
+            path_v3 = os.path.join("checkpoints_v3", args.scenario, args.target, "best.pt")
+            path_v2 = os.path.join("checkpoints", args.scenario, args.target, "best.pt")
+            if os.path.isfile(path_v3):
+                args.teacher_ckpt = path_v3
+            elif os.path.isfile(path_v2):
+                args.teacher_ckpt = path_v2
+            else:
+                args.teacher_ckpt = path_v3
             print(f"Auto-resolved teacher checkpoint to: {args.teacher_ckpt}")
         else:
             raise ValueError("Please specify --teacher_ckpt or --scenario to locate the teacher model.")
