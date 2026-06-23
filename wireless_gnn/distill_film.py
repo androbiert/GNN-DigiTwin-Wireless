@@ -174,14 +174,12 @@ def train_distilled(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    # ── Resolve teacher checkpoint path if not provided ───────────────────── #
+    # ── Resolve teacher checkpoint path ───────────────────────────────────── #
     if args.teacher_ckpt is None:
         if args.scenario:
             possible_dirs = [
                 os.path.join("checkpoints_v3"),
                 os.path.join("..", "checkpoints_v3"),
-                os.path.join("checkpoints"),
-                os.path.join("..", "checkpoints")
             ]
             found = False
             for base in possible_dirs:
@@ -196,6 +194,22 @@ def train_distilled(args):
             print(f"Auto-resolved teacher checkpoint to: {args.teacher_ckpt}")
         else:
             raise ValueError("Please specify --teacher_ckpt or --scenario to locate the teacher model.")
+    else:
+        candidate_dir = args.teacher_ckpt
+        if not os.path.isdir(candidate_dir):
+            parent_candidate = os.path.join("..", args.teacher_ckpt)
+            if os.path.isdir(parent_candidate):
+                candidate_dir = parent_candidate
+
+        if os.path.isdir(candidate_dir):
+            if args.scenario:
+                args.teacher_ckpt = os.path.join(candidate_dir, args.scenario, args.target, "best.pt")
+                print(f"Auto-resolved teacher checkpoint directory to file: {args.teacher_ckpt}")
+            else:
+                direct_file = os.path.join(candidate_dir, "best.pt")
+                if os.path.isfile(direct_file):
+                    args.teacher_ckpt = direct_file
+                    print(f"Auto-resolved teacher checkpoint to: {args.teacher_ckpt}")
 
     # ── Checkpoint directory ──────────────────────────────────────────────── #
     if args.scenario:
