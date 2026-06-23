@@ -195,18 +195,19 @@ def train_distilled(args):
         else:
             raise ValueError("Please specify --teacher_ckpt or --scenario to locate the teacher model.")
     else:
-        candidate_dir = args.teacher_ckpt
-        if not os.path.isdir(candidate_dir):
+        # Check if the user specified path directly exists relative to current dir or parent dir
+        if not os.path.exists(args.teacher_ckpt):
             parent_candidate = os.path.join("..", args.teacher_ckpt)
-            if os.path.isdir(parent_candidate):
-                candidate_dir = parent_candidate
+            if os.path.exists(parent_candidate):
+                args.teacher_ckpt = parent_candidate
 
-        if os.path.isdir(candidate_dir):
+        # Now handle directory vs file checks
+        if os.path.isdir(args.teacher_ckpt):
             if args.scenario:
-                args.teacher_ckpt = os.path.join(candidate_dir, args.scenario, args.target, "best.pt")
+                args.teacher_ckpt = os.path.join(args.teacher_ckpt, args.scenario, args.target, "best.pt")
                 print(f"Auto-resolved teacher checkpoint directory to file: {args.teacher_ckpt}")
             else:
-                direct_file = os.path.join(candidate_dir, "best.pt")
+                direct_file = os.path.join(args.teacher_ckpt, "best.pt")
                 if os.path.isfile(direct_file):
                     args.teacher_ckpt = direct_file
                     print(f"Auto-resolved teacher checkpoint to: {args.teacher_ckpt}")
