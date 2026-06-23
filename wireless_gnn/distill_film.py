@@ -273,7 +273,7 @@ def train_distilled(args):
     ).to(device)
 
     print(f"Loading teacher checkpoint: {args.teacher_ckpt}")
-    ckpt = torch.load(args.teacher_ckpt, map_location=device)
+    ckpt = torch.load(args.teacher_ckpt, map_location=device, weights_only=False)
     if "model" in ckpt:
         ckpt = ckpt["model"]
     teacher.load_state_dict(ckpt)
