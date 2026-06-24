@@ -92,6 +92,9 @@ def run_distill_epoch(
 
     total_loss = 0.0
     total_mape = 0.0
+    total_hard = 0.0
+    total_soft = 0.0
+    total_feat = 0.0
     n = 0
 
     ctx = torch.enable_grad() if training else torch.no_grad()
@@ -172,20 +175,27 @@ def run_distill_epoch(
 
                 total_loss += loss.item()
                 total_mape += loss_hard.item()
+                total_hard += loss_hard.item()
+                total_soft += loss_soft.item()
+                total_feat += loss_feat.item()
                 n += 1
 
             if adaptive:
                 pbar.set_postfix(
-                    mape=f"{total_mape/max(n,1):.4f}",
                     loss=f"{total_loss/max(n,1):.4f}",
+                    L_hard=f"{total_hard/max(n,1):.4f}",
+                    L_soft=f"{total_soft/max(n,1):.4f}",
+                    L_feat=f"{total_feat/max(n,1):.4f}",
                     alpha=f"{cur_alpha:.2f}",
                     beta=f"{cur_beta:.2f}",
                     gamma=f"{cur_gamma:.2f}",
                 )
             else:
                 pbar.set_postfix(
-                    mape=f"{total_mape/max(n,1):.4f}",
                     loss=f"{total_loss/max(n,1):.4f}",
+                    L_hard=f"{total_hard/max(n,1):.4f}",
+                    L_soft=f"{total_soft/max(n,1):.4f}",
+                    L_feat=f"{total_feat/max(n,1):.4f}",
                 )
 
     return total_loss / max(n, 1), total_mape / max(n, 1)
