@@ -81,6 +81,7 @@ def run_distill_epoch(
     alpha: float = 0.3,
     beta:  float = 0.5,
     gamma: float = 0.2,
+    adaptive: bool = True,
     desc:  str   = "",
 ) -> Tuple[float, float]:
     """Single epoch of distillation training or validation."""
@@ -138,8 +139,23 @@ def run_distill_epoch(
                 else:
                     loss_feat = torch.tensor(0.0, device=device)
 
+                # Adaptive coefficient weighting: the larger the loss, the larger its coefficient
+                if adaptive:
+                    w_hard = float(loss_hard.item())
+                    w_soft = float(loss_soft.item())
+                    w_feat = float(loss_feat.item())
+                    total_w = w_hard + w_soft + w_feat + 1e-8
+                    
+                    cur_alpha = w_hard / total_w
+                    cur_beta  = w_soft / total_w
+                    cur_gamma = w_feat / total_w
+                else:
+                    cur_alpha = alpha
+                    cur_beta  = beta
+                    cur_gamma = gamma
+
                 # Combined loss
-                loss = alpha * loss_hard + beta * loss_soft + gamma * loss_feat
+                loss = cur_alpha * loss_hard + cur_beta * loss_soft + cur_gamma * loss_feat
 
                 if training:
                     optimizer.zero_grad()
@@ -158,10 +174,19 @@ def run_distill_epoch(
                 total_mape += loss_hard.item()
                 n += 1
 
-            pbar.set_postfix(
-                mape=f"{total_mape/max(n,1):.4f}",
-                loss=f"{total_loss/max(n,1):.4f}",
-            )
+            if adaptive:
+                pbar.set_postfix(
+                    mape=f"{total_mape/max(n,1):.4f}",
+                    loss=f"{total_loss/max(n,1):.4f}",
+                    alpha=f"{cur_alpha:.2f}",
+                    beta=f"{cur_beta:.2f}",
+                    gamma=f"{cur_gamma:.2f}",
+                )
+            else:
+                pbar.set_postfix(
+                    mape=f"{total_mape/max(n,1):.4f}",
+                    loss=f"{total_loss/max(n,1):.4f}",
+                )
 
     return total_loss / max(n, 1), total_mape / max(n, 1)
 
@@ -343,19 +368,19 @@ def train_distilled(args):
         if "proj" in ckpt_data:
             proj.load_state_dict(ckpt_data["proj"])
         else:
-            print("⚠️ Warning: Projection state dict not found in checkpoint.")
+            print(" Warning: Projection state dict not found in checkpoint.")
 
         # Load optimizer state safely
         if "optimizer" in ckpt_data:
             optimizer.load_state_dict(ckpt_data["optimizer"])
         else:
-            print("⚠️ Warning: Optimizer state not found in checkpoint. Initialising fresh optimizer.")
+            print(" Warning: Optimizer state not found in checkpoint. Initialising fresh optimizer.")
 
         # Load scheduler state safely
         if "scheduler" in ckpt_data and scheduler is not None:
             scheduler.load_state_dict(ckpt_data["scheduler"])
         else:
-            print("⚠️ Warning: Scheduler state not found in checkpoint. Initialising fresh scheduler.")
+            print(" Warning: Scheduler state not found in checkpoint. Initialising fresh scheduler.")
 
         start_epoch = ckpt_data.get("epoch", 0) + 1
         best_val_mape = ckpt_data.get("best_val_mape", ckpt_data.get("val_mape", float("inf")))
@@ -366,7 +391,7 @@ def train_distilled(args):
             no_improve = 0
         print(f"★ Successfully resumed from epoch {start_epoch - 1}. Training will continue from epoch {start_epoch}.")
     elif args.resume:
-        print(f"⚠️ Warning: --resume specified, but no checkpoint found at '{latest_ckpt}' or '{best_ckpt}'.")
+        print(f"Warning: --resume specified, but no checkpoint found at '{latest_ckpt}' or '{best_ckpt}'.")
         print("  Starting training from scratch (epoch 1).")
 
     # Load best state for final evaluation reference
@@ -391,6 +416,7 @@ def train_distilled(args):
             teacher, student, proj, train_loader, device, normalizer,
             optimizer,
             alpha=args.alpha, beta=args.beta, gamma=args.gamma,
+            adaptive=not args.no_adaptive_loss,
             desc=f"  train ep{epoch:03d}",
         )
 
@@ -398,6 +424,7 @@ def train_distilled(args):
             teacher, student, proj, val_loader, device, normalizer,
             optimizer=None,
             alpha=args.alpha, beta=args.beta, gamma=args.gamma,
+            adaptive=not args.no_adaptive_loss,
             desc=f"  val ep{epoch:03d}",
         )
 
@@ -451,6 +478,7 @@ def train_distilled(args):
         teacher, student, proj, test_loader, device, normalizer,
         optimizer=None,
         alpha=1.0, beta=0.0, gamma=0.0,
+        adaptive=False,
         desc="  test evaluation",
     )
 
@@ -500,6 +528,8 @@ if __name__ == "__main__":
                         help="Soft target loss weight")
     parser.add_argument("--gamma", type=float, default=0.2,
                         help="Feature representation loss weight")
+    parser.add_argument("--no_adaptive_loss", action="store_true",
+                        help="Disable adaptive loss weighting (use fixed alpha/beta/gamma weights instead)")
 
     # Teacher config
     parser.add_argument("--teacher_dim", type=int, default=64)
