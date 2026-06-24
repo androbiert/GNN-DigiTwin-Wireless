@@ -332,6 +332,9 @@ def train_distilled(args):
         start_epoch = ckpt_data.get("epoch", 0) + 1
         best_val_mape = ckpt_data.get("best_val_mape", float("inf"))
         no_improve = ckpt_data.get("no_improve", 0)
+        if no_improve >= args.patience:
+            print(f"★ Resetting loaded patience counter 'no_improve' to 0 (previously {no_improve}) to prevent immediate early stopping upon resumption.")
+            no_improve = 0
 
         if os.path.isfile(best_ckpt):
             best_data = torch.load(best_ckpt, map_location="cpu", weights_only=False)

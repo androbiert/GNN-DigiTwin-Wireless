@@ -29,6 +29,20 @@ from wireless_gnn.student_film import WirelessNetFermiStudent
 from wireless_gnn.dataset import build_scenario_datasets, collate_fn
 from wireless_gnn.scenario_registry import discover_scenarios, group_by_scenario, filter_for_target
 
+def make_json_serializable(obj):
+    if isinstance(obj, dict):
+        return {k: make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [make_json_serializable(x) for x in obj]
+    elif isinstance(obj, (np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, (np.int32, np.int64)):
+        return int(obj)
+    elif isinstance(obj, np.ndarray):
+        return make_json_serializable(obj.tolist())
+    else:
+        return obj
+
 def load_student_model(ckpt_path: str, device: torch.device):
     """Loads the distilled student GNN model from checkpoint."""
     if not os.path.isfile(ckpt_path):
@@ -213,7 +227,7 @@ def main():
             "scenario": args.scenario,
             "target": target,
             "parameters": sum(p.numel() for p in model.parameters()),
-            "metrics": {k: float(v) if not isinstance(v, dict) else v for k, v in metrics.items()}
+            "metrics": make_json_serializable(metrics)
         }
         json.dump(summary_data, f, indent=2)
     print(f"Summary JSON saved to {summary_path}")
