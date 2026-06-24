@@ -221,6 +221,7 @@ def train_distilled(args):
         ckpt_dir = os.path.join(args.checkpoint_dir, f"distilled_film_{args.target}")
     os.makedirs(ckpt_dir, exist_ok=True)
     best_ckpt = os.path.join(ckpt_dir, "best.pt")
+    print(f"Checkpoint directory resolved to: {ckpt_dir}")
 
     # ── Datasets ──────────────────────────────────────────────────────────── #
     if args.scenario:
@@ -321,20 +322,25 @@ def train_distilled(args):
     no_improve = 0
 
     latest_ckpt = os.path.join(ckpt_dir, "latest.pt")
-    if args.resume and os.path.isfile(latest_ckpt):
-        print(f"★ Resuming from latest checkpoint: {latest_ckpt}")
-        ckpt_data = torch.load(latest_ckpt, map_location=device, weights_only=False)
-        student.load_state_dict(ckpt_data["student"])
-        proj.load_state_dict(ckpt_data["proj"])
-        optimizer.load_state_dict(ckpt_data["optimizer"])
-        if "scheduler" in ckpt_data and scheduler is not None:
-            scheduler.load_state_dict(ckpt_data["scheduler"])
-        start_epoch = ckpt_data.get("epoch", 0) + 1
-        best_val_mape = ckpt_data.get("best_val_mape", float("inf"))
-        no_improve = ckpt_data.get("no_improve", 0)
-        if no_improve >= args.patience:
-            print(f"★ Resetting loaded patience counter 'no_improve' to 0 (previously {no_improve}) to prevent immediate early stopping upon resumption.")
-            no_improve = 0
+    if args.resume:
+        if os.path.isfile(latest_ckpt):
+            print(f"★ Resuming from latest checkpoint: {latest_ckpt}")
+            ckpt_data = torch.load(latest_ckpt, map_location=device, weights_only=False)
+            student.load_state_dict(ckpt_data["student"])
+            proj.load_state_dict(ckpt_data["proj"])
+            optimizer.load_state_dict(ckpt_data["optimizer"])
+            if "scheduler" in ckpt_data and scheduler is not None:
+                scheduler.load_state_dict(ckpt_data["scheduler"])
+            start_epoch = ckpt_data.get("epoch", 0) + 1
+            best_val_mape = ckpt_data.get("best_val_mape", float("inf"))
+            no_improve = ckpt_data.get("no_improve", 0)
+            if no_improve >= args.patience:
+                print(f"★ Resetting loaded patience counter 'no_improve' to 0 (previously {no_improve}) to prevent immediate early stopping upon resumption.")
+                no_improve = 0
+            print(f"★ Successfully resumed from epoch {start_epoch - 1}. Training will continue from epoch {start_epoch}.")
+        else:
+            print(f"⚠️ Warning: --resume specified, but no latest checkpoint file found at: {latest_ckpt}")
+            print(f"  Starting training from scratch (epoch 1).")
 
         if os.path.isfile(best_ckpt):
             best_data = torch.load(best_ckpt, map_location="cpu", weights_only=False)
