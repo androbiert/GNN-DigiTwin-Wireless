@@ -111,11 +111,19 @@ def run_distill_epoch(
                         np.asarray(graph["target_delay"]),
                         dtype=torch.float32, device=device
                     )
+                    true_norm = torch.tensor(
+                        np.asarray(graph["target_delay_norm"]),
+                        dtype=torch.float32, device=device
+                    )
                 else:
                     mean = torch.tensor(normalizer.tput_mean, device=device)
                     std  = torch.tensor(normalizer.tput_std,  device=device)
                     true_phys = torch.tensor(
                         np.asarray(graph["target_throughput"]),
+                        dtype=torch.float32, device=device
+                    )
+                    true_norm = torch.tensor(
+                        np.asarray(graph["target_throughput_norm"]),
                         dtype=torch.float32, device=device
                     )
 
@@ -126,9 +134,12 @@ def run_distill_epoch(
                 # Student forward
                 student_pred, student_flow_state = student(graph)
 
-                # ── Loss 1: Hard target (ground truth MAPE) ─────────────── #
+                # ── Loss 1: Hard target (ground truth MSE on normalized target) ── #
+                loss_hard = F.mse_loss(student_pred, true_norm)
+                
+                # Compute MAPE on physical values for validation metric tracking
                 student_pred_phys = student_pred * std + mean
-                loss_hard = mape_loss(student_pred_phys, true_phys)
+                loss_hard_mape = mape_loss(student_pred_phys, true_phys)
 
                 # ── Loss 2: Soft target (match teacher output, MSE) ─────── #
                 loss_soft = F.mse_loss(student_pred, teacher_pred.detach())
@@ -174,7 +185,7 @@ def run_distill_epoch(
                     optimizer.step()
 
                 total_loss += loss.item()
-                total_mape += loss_hard.item()
+                total_mape += loss_hard_mape.item()
                 total_hard += loss_hard.item()
                 total_soft += loss_soft.item()
                 total_feat += loss_feat.item()
