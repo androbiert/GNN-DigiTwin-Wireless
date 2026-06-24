@@ -404,10 +404,13 @@ def build_scenario_datasets(
         with open(split_file, "r") as f:
             split_meta = json.load(f)
 
-        # Validate that the split was built from the same data
-        if split_meta.get("n_total_graphs") != n_total:
-            print(f"[dataset] WARNING: split.json has n_total_graphs={split_meta.get('n_total_graphs')} "
-                  f"but current data has {n_total}. Regenerating split.")
+        # Validate that the split parameters match the requested configuration
+        if (split_meta.get("n_total_graphs") != n_total or
+            split_meta.get("subsample_ratio") != subsample_ratio or
+            split_meta.get("seed") != seed or
+            split_meta.get("target") != target):
+            print(f"[dataset] WARNING: split.json parameters do not match requested configuration. "
+                  f"Regenerating split (requested subsample={subsample_ratio}, seed={seed}, target={target}).")
         else:
             subset_idx       = split_meta["subset_idx"]
             train_idx        = split_meta["train_idx"]
