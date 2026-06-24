@@ -178,7 +178,9 @@ def train_distilled(args):
     if args.teacher_ckpt is None:
         if args.scenario:
             possible_dirs = [
+                os.path.join("checkpoints"),
                 os.path.join("checkpoints_v3"),
+                os.path.join("..", "checkpoints"),
                 os.path.join("..", "checkpoints_v3"),
             ]
             found = False
@@ -189,7 +191,7 @@ def train_distilled(args):
                     found = True
                     break
             if not found:
-                # Default to parent directory v3 path for error reporting
+                # Default to parent directory checkpoints path for error reporting
                 args.teacher_ckpt = os.path.join("..", "checkpoints_v3", args.scenario, args.target, "best.pt")
             print(f"Auto-resolved teacher checkpoint to: {args.teacher_ckpt}")
         else:
@@ -378,6 +380,7 @@ def train_distilled(args):
                 "epoch": epoch,
                 "config": vars(args),
                 "architecture": "FiLM_Highway",
+                "normalizer": normalizer.get_state(),
             }, best_ckpt)
         else:
             no_improve += 1
@@ -393,6 +396,7 @@ def train_distilled(args):
             "best_val_mape": best_val_mape,
             "no_improve": no_improve,
             "config": vars(args),
+            "normalizer": normalizer.get_state(),
         }, latest_ckpt)
 
         flag = "★" if is_best else ""
