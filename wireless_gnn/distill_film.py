@@ -134,21 +134,20 @@ def run_distill_epoch(
                 # Student forward
                 student_pred, student_flow_state = student(graph)
 
-                # Compute student prediction in physical space
-                student_pred_phys = student_pred * std + mean
-
-                # ── Loss 1: Hard target (ground truth MAPE) ─────────────── #
-                loss_hard = mape_loss(student_pred_phys, true_phys)
-                loss_hard_mape = loss_hard  # for compatibility with logging
+                # ── Loss 1: Hard target (ground truth MAE on normalized targets) ── #
+                loss_hard = F.l1_loss(student_pred, true_norm)
                 
-                # ── Loss 2: Soft target (match teacher prediction MAPE in physical space) ── #
-                teacher_pred_phys = teacher_pred * std + mean
-                loss_soft = mape_loss(student_pred_phys, teacher_pred_phys.detach())
+                # Compute MAPE on physical values for validation metric tracking
+                student_pred_phys = student_pred * std + mean
+                loss_hard_mape = mape_loss(student_pred_phys, true_phys)
 
-                # ── Loss 3: Feature hint MAPE ───────────────────────────── #
+                # ── Loss 2: Soft target (match teacher output, MAE) ─────── #
+                loss_soft = F.l1_loss(student_pred, teacher_pred.detach())
+
+                # ── Loss 3: Feature hint MAE ────────────────────────────── #
                 if student_flow_state.size(0) > 0:
                     proj_student = proj(student_flow_state)
-                    loss_feat = mape_loss(
+                    loss_feat = F.l1_loss(
                         proj_student, teacher_flow_state.detach()
                     )
                 else:
