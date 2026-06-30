@@ -144,7 +144,7 @@ def main():
                 results.append(res_entry)
                 
                 scale = 1e-3
-                print(f"    -> MAE: {metrics['MAE'] * scale:.2f} kbps | RMSE: {metrics['RMSE'] * scale:.2f} kbps | MAPE: {metrics['MAPE (%)']:.2f}% | SMAPE: {metrics['SMAPE (%)']:.2f}% | R²: {metrics['R²']:.4f} | Acc@10: {metrics['Acc@10%']:.1f}% | Acc@20: {metrics['Acc@20%']:.1f}% | Time: {avg_infer_ms:.2f} ms/graph")
+                print(f"    -> MAE: {metrics['MAE'] * scale:.2f} kbps | RMSE: {metrics['RMSE'] * scale:.2f} kbps | MAPE: {metrics['MAPE (%)']:.2f}% | SMAPE: {metrics['SMAPE (%)']:.2f}% | R²: {metrics['R²']:.4f} | Acc@10: {metrics['Acc@10%']:.1f}% | Acc@20: {metrics['Acc@10%']:.1f}% | Time: {avg_infer_ms:.2f} ms/graph")
                 
                 print(f"    [Sample Comparison for {policy}]")
                 num_samples_to_print = min(30, len(true))
