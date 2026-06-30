@@ -161,12 +161,18 @@ def main():
                 print("\n")
 
     print(f"\n{'='*70}")
-    print(f"FINAL SUMMARY - Throughput Evaluation Across Emission Power Levels")
+    print(f"FINAL SUMMARY - Throughput Evaluation Across Emission Power Levels (MAPE < 15%)")
     print(f"{'='*70}")
     print(f"{'Scenario':<10} {'Power':<12} {'MAE (kbps)':>12} {'RMSE (kbps)':>12} {'MAPE (%)':>10} {'R²':>10} {'Acc@20':>8}")
     print("-" * 70)
-    for r in results:
-        print(f"{r['Scenario']:<10} {r['Power']:<12} {r['MAE']*1e-3:>12.2f} {r['RMSE']*1e-3:>12.2f} {r['MAPE']:>10.2f} {r['R2']:>10.4f} {r['Acc20']:>7.1f}%")
+    
+    good_results = [r for r in results if r['MAPE'] < 15.0]
+    
+    if good_results:
+        for r in good_results:
+            print(f"{r['Scenario']:<10} {r['Power']:<12} {r['MAE']*1e-3:>12.2f} {r['RMSE']*1e-3:>12.2f} {r['MAPE']:>10.2f} {r['R2']:>10.4f} {r['Acc20']:>7.1f}%")
+    else:
+        print("No evaluations met the criteria (MAPE < 15%).")
 
     # Save results to JSON
     out_file = "evaluation_throughput_power.json"
