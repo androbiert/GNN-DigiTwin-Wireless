@@ -160,12 +160,18 @@ def main():
                 print("\n")
 
     print(f"\n{'='*70}")
-    print(f"FINAL SUMMARY - Throughput Evaluation Across Policies")
+    print(f"FINAL SUMMARY - Throughput Evaluation Across Policies (MAPE < 15%)")
     print(f"{'='*70}")
     print(f"{'Scenario':<10} {'Policy':<12} {'MAE (kbps)':>12} {'RMSE (kbps)':>12} {'MAPE (%)':>10} {'SMAPE (%)':>11} {'R²':>10} {'Acc@10':>9} {'Acc@20':>9} {'Time(ms)':>9}")
     print("-" * 115)
-    for r in results:
-        print(f"{r['Scenario']:<10} {r['Policy']:<12} {r['MAE']*1e-3:>12.2f} {r['RMSE']*1e-3:>12.2f} {r['MAPE']:>10.2f} {r['SMAPE']:>11.2f} {r['R2']:>10.4f} {r['Acc10']:>8.1f}% {r['Acc20']:>8.1f}% {r['InferTime_ms']:>6.2f} ms")
+    
+    good_results = [r for r in results if r['MAPE'] < 15.0]
+    
+    if good_results:
+        for r in good_results:
+            print(f"{r['Scenario']:<10} {r['Policy']:<12} {r['MAE']*1e-3:>12.2f} {r['RMSE']*1e-3:>12.2f} {r['MAPE']:>10.2f} {r['SMAPE']:>11.2f} {r['R2']:>10.4f} {r['Acc10']:>8.1f}% {r['Acc20']:>8.1f}% {r['InferTime_ms']:>6.2f} ms")
+    else:
+        print("No policies met the criteria (MAPE < 15%).")
     
     # Save results to JSON
     out_file = "evaluation_throughput_policies.json"
