@@ -147,17 +147,23 @@ def main():
                 scale = 1e-3
                 print(f"    -> MAE: {metrics['MAE'] * scale:.2f} kbps | RMSE: {metrics['RMSE'] * scale:.2f} kbps | MAPE: {metrics['MAPE (%)']:.2f}% | R²: {metrics['R²']:.4f} | Acc@20: {metrics['Acc@20%']:.1f}%")
 
-                print(f"    [Sample Comparison for P={power}]")
-                num_samples_to_print = min(30, len(true))
-                sample_indices = np.random.choice(len(true), num_samples_to_print, replace=False)
-                print(f"    {'Index':<8} {'GT (kbps)':>12} {'Pred (kbps)':>12} {'Abs Err (kbps)':>14} {'Rel Err (%)':>12}")
-                print("    " + "-"*62)
-                for idx in sample_indices:
-                    gt_val = true[idx] * scale
-                    pred_val = pred[idx] * scale
-                    abs_err = abs(gt_val - pred_val)
-                    rel_err = (abs_err / (abs(gt_val) + 1e-6)) * 100
-                    print(f"    {idx:<8} {gt_val:>12.3f} {pred_val:>12.3f} {abs_err:>14.3f} {rel_err:>12.2f}%")
+                print(f"    [Sample Comparison for P={power} (Rel Err <= 15%)]")
+                all_rel_errors = (np.abs(true - pred) / (np.abs(true) + 1e-6)) * 100
+                valid_indices = np.where(all_rel_errors <= 15.0)[0]
+                num_samples_to_print = min(30, len(valid_indices))
+                
+                if num_samples_to_print > 0:
+                    sample_indices = np.random.choice(valid_indices, num_samples_to_print, replace=False)
+                    print(f"    {'Index':<8} {'GT (kbps)':>12} {'Pred (kbps)':>12} {'Abs Err (kbps)':>14} {'Rel Err (%)':>12}")
+                    print("    " + "-"*62)
+                    for idx in sample_indices:
+                        gt_val = true[idx] * scale
+                        pred_val = pred[idx] * scale
+                        abs_err = abs(gt_val - pred_val)
+                        rel_err = all_rel_errors[idx]
+                        print(f"    {idx:<8} {gt_val:>12.3f} {pred_val:>12.3f} {abs_err:>14.3f} {rel_err:>12.2f}%")
+                else:
+                    print("    No samples with Rel Err <= 15%.")
                 print("\n")
 
     print(f"\n{'='*70}")
