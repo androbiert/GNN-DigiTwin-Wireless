@@ -145,7 +145,7 @@ def main():
                 results.append(res_entry)
 
                 scale = 1e-3
-                print(f"    -> MAE: {metrics['MAE'] * scale:.2f} kbps | RMSE: {metrics['RMSE'] * scale:.2f} kbps | MAPE: {metrics['MAPE (%)']:.2f}% | R²: {metrics['R²']:.4f} | Acc@20: {metrics['Acc@10%']:.1f}%")
+                print(f"    -> MAE: {metrics['MAE'] * scale:.2f} kbps | RMSE: {metrics['RMSE'] * scale:.2f} kbps | MAPE: {metrics['MAPE (%)']:.2f}% | R²: {metrics['R²']:.4f} | Acc@10: {metrics['Acc@20%']:.1f}%")
 
                 print(f"    [Sample Comparison for P={power} (Rel Err <= 15%)]")
                 all_rel_errors = (np.abs(true - pred) / (np.abs(true) + 1e-6)) * 100
