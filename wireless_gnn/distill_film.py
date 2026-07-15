@@ -85,6 +85,7 @@ def run_distill_epoch(
     adaptive: bool = True,
     tcad_ema: dict = None,
     desc:  str   = "",
+    loss_type: str = "mae",
 ) -> Tuple[float, float]:
     """Single epoch of distillation training or validation."""
     if tcad_ema is None:
@@ -100,6 +101,11 @@ def run_distill_epoch(
     total_soft = 0.0
     total_feat = 0.0
     n = 0
+
+    if loss_type == 'mse':
+        criterion = F.mse_loss
+    else:
+        criterion = F.l1_loss
 
     ctx = torch.enable_grad() if training else torch.no_grad()
     with ctx:
@@ -138,20 +144,20 @@ def run_distill_epoch(
                 # Student forward
                 student_pred, student_flow_state = student(graph)
 
-                # ── Loss 1: Hard target (ground truth MAE on normalized targets) ── #
-                loss_hard = F.l1_loss(student_pred, true_norm)
+                # ── Loss 1: Hard target ── #
+                loss_hard = criterion(student_pred, true_norm)
                 
                 # Compute MAPE on physical values for validation metric tracking
                 student_pred_phys = student_pred * std + mean
                 loss_hard_mape = mape_loss(student_pred_phys, true_phys)
 
-                # ── Loss 2: Soft target (match teacher output, MAE) ─────── #
-                loss_soft = F.l1_loss(student_pred, teacher_pred.detach())
+                # ── Loss 2: Soft target ─────── #
+                loss_soft = criterion(student_pred, teacher_pred.detach())
 
-                # ── Loss 3: Feature hint MAE ────────────────────────────── #
+                # ── Loss 3: Feature hint ────────────────────────────── #
                 if student_flow_state.size(0) > 0:
                     proj_student = proj(student_flow_state)
-                    loss_feat = F.l1_loss(
+                    loss_feat = criterion(
                         proj_student, teacher_flow_state.detach()
                     )
                 else:
@@ -159,9 +165,9 @@ def run_distill_epoch(
 
                 # Adaptive weighting using Teacher-Confidence Aware Distillation (TCAD)
                 if adaptive:
-                    # 1. Measure teacher's error (ground truth MAE on normalized targets)
+                    # 1. Measure teacher's error
                     with torch.no_grad():
-                        loss_teacher = F.l1_loss(teacher_pred, true_norm)
+                        loss_teacher = criterion(teacher_pred, true_norm)
                         
                         # 2. Update EMA of Teacher MAE (MLE for Laplace scale parameter b)
                         tcad_ema['teacher_mae'] = 0.99 * tcad_ema['teacher_mae'] + 0.01 * loss_teacher.item()
@@ -381,7 +387,7 @@ def train_distilled(args):
     )
 
     start_epoch = 1
-    best_val_mape = float("inf")
+    best_val_metric = float("inf")
     best_state = copy.deepcopy(student.state_dict())
     no_improve = 0
     
@@ -437,7 +443,7 @@ def train_distilled(args):
             print(" Warning: Scheduler state not found in checkpoint. Initialising fresh scheduler.")
 
         start_epoch = ckpt_data.get("epoch", 0) + 1
-        best_val_mape = ckpt_data.get("best_val_mape", ckpt_data.get("val_mape", float("inf")))
+        best_val_metric = ckpt_data.get("best_val_metric", ckpt_data.get("best_val_mape", ckpt_data.get("val_mape", float("inf"))))
         no_improve = ckpt_data.get("no_improve", 0)
 
         if no_improve >= args.patience:
@@ -473,6 +479,7 @@ def train_distilled(args):
             adaptive=not args.no_adaptive_loss,
             tcad_ema=tcad_ema_state,
             desc=f"  train ep{epoch:03d}",
+            loss_type=args.loss_fn,
         )
 
         val_loss, val_mape = run_distill_epoch(
@@ -482,21 +489,26 @@ def train_distilled(args):
             adaptive=not args.no_adaptive_loss,
             tcad_ema=tcad_ema_state,
             desc=f"  val ep{epoch:03d}",
+            loss_type=args.loss_fn,
         )
 
         scheduler.step()
         cur_lr = optimizer.param_groups[0]["lr"]
         elapsed = time.time() - t0
 
-        is_best = val_mape < best_val_mape
+        val_metric = val_mape if args.best_metric == "mape" else val_loss
+        is_best = val_metric < best_val_metric
+
         if is_best:
-            best_val_mape = val_mape
+            best_val_metric = val_metric
             best_state = copy.deepcopy(student.state_dict())
             no_improve = 0
             torch.save({
                 "student": best_state,
                 "proj": proj.state_dict(),
                 "val_mape": val_mape,
+                "val_loss": val_loss,
+                "best_val_metric": best_val_metric,
                 "epoch": epoch,
                 "config": vars(args),
                 "tcad_ema": tcad_ema_state,
@@ -514,7 +526,7 @@ def train_distilled(args):
             "proj": proj.state_dict(),
             "optimizer": optimizer.state_dict(),
             "scheduler": scheduler.state_dict() if scheduler is not None else None,
-            "best_val_mape": best_val_mape,
+            "best_val_metric": best_val_metric,
             "no_improve": no_improve,
             "config": vars(args),
             "tcad_ema": tcad_ema_state,
@@ -539,13 +551,14 @@ def train_distilled(args):
         adaptive=False,
         tcad_ema=tcad_ema_state,
         desc="  test evaluation",
+        loss_type=args.loss_fn,
     )
 
     print(f"\n{'='*60}")
     print(f"  DISTILLATION RESULTS — FiLM & Highway Student")
     print(f"  Target         : {args.target.upper()}")
     print(f"  Final Test MAPE: {test_mape:.4%}")
-    print(f"  Best Val MAPE  : {best_val_mape:.4%}")
+    print(f"  Best Val Metric: {best_val_metric:.4f} (tracked by {args.best_metric})")
     print(f"  Saved to       : {best_ckpt}")
     print(f"{'='*60}\n")
 
@@ -590,6 +603,10 @@ if __name__ == "__main__":
                         help="Feature representation loss weight")
     parser.add_argument("--no_adaptive_loss", action="store_true",
                         help="Disable adaptive loss weighting (use fixed alpha/beta/gamma weights instead)")
+    parser.add_argument("--loss_fn", type=str, default="mae", choices=["mae", "mse"],
+                        help="Loss function to use (mae or mse)")
+    parser.add_argument("--best_metric", type=str, default="mape", choices=["mape", "loss"],
+                        help="Metric to use for taking the best model (mape or loss)")
 
     # Teacher config
     parser.add_argument("--teacher_dim", type=int, default=64)
