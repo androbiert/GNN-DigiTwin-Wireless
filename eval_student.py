@@ -28,7 +28,7 @@ from evaluate_models import (
 from wireless_gnn.student_film import WirelessNetFermiStudent
 from wireless_gnn.dataset import build_scenario_datasets, collate_fn
 from wireless_gnn.scenario_registry import discover_scenarios, group_by_scenario, filter_for_target
-
+torch.set_num_threads(4)
 def make_json_serializable(obj):
     if isinstance(obj, dict):
         return {k: make_json_serializable(v) for k, v in obj.items()}
@@ -231,7 +231,7 @@ def main():
         }
         json.dump(summary_data, f, indent=2)
     print(f"Summary JSON saved to {summary_path}")
-    print("✅ Done!")
+    print(" Done!")
 
 if __name__ == "__main__":
     main()

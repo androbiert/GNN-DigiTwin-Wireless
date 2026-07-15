@@ -66,6 +66,24 @@ class FeatureProjection(nn.Module):
         return self.proj(x)
 
 
+class UncertaintyLoss(nn.Module):
+    """Homoscedastic task uncertainty weighting for multi-task loss (Kendall et al. 2018).
+    Weights are inversely proportional to loss variance."""
+    
+    def __init__(self, num_losses=3):
+        super().__init__()
+        # Initialize log_vars to 0. 
+        self.log_vars = nn.Parameter(torch.zeros(num_losses))
+        
+    def forward(self, *losses):
+        total_loss = 0
+        for i, loss in enumerate(losses):
+            # precision = exp(-log_var) = 1 / sigma^2
+            precision = torch.exp(-self.log_vars[i])
+            total_loss += 0.5 * precision * loss + 0.5 * self.log_vars[i]
+        return total_loss
+
+
 # --------------------------------------------------------------------------- #
 # Epoch runner
 # --------------------------------------------------------------------------- #
@@ -74,6 +92,7 @@ def run_distill_epoch(
     teacher:    WirelessNetFermiV3,
     student:    WirelessNetFermiStudent,
     proj:       FeatureProjection,
+    loss_weighting: nn.Module,
     loader:     DataLoader,
     device:     torch.device,
     normalizer: FeatureNormalizer,
@@ -153,23 +172,23 @@ def run_distill_epoch(
                 else:
                     loss_feat = torch.tensor(0.0, device=device)
 
-                # Adaptive coefficient weighting: the larger the loss, the larger its coefficient
+                # Adaptive weighting using Homoscedastic Task Uncertainty (Kendall et al. 2018)
                 if adaptive:
-                    w_hard = float(loss_hard.item())
-                    w_soft = float(loss_soft.item())
-                    w_feat = float(loss_feat.item())
-                    total_w = w_hard + w_soft + w_feat + 1e-8
+                    loss = loss_weighting(loss_hard, loss_soft, loss_feat)
                     
-                    cur_alpha = w_hard / total_w
-                    cur_beta  = w_soft / total_w
-                    cur_gamma = w_feat / total_w
+                    # Compute equivalent weights for logging
+                    with torch.no_grad():
+                        precisions = torch.exp(-loss_weighting.log_vars)
+                        # We normalize the precisions to sum to 1 just for the progress bar display
+                        tot_prec = precisions.sum() + 1e-8
+                        cur_alpha = (precisions[0] / tot_prec).item()
+                        cur_beta  = (precisions[1] / tot_prec).item()
+                        cur_gamma = (precisions[2] / tot_prec).item()
                 else:
                     cur_alpha = alpha
                     cur_beta  = beta
                     cur_gamma = gamma
-
-                # Combined loss
-                loss = cur_alpha * loss_hard + cur_beta * loss_soft + cur_gamma * loss_feat
+                    loss = cur_alpha * loss_hard + cur_beta * loss_soft + cur_gamma * loss_feat
 
                 if training:
                     optimizer.zero_grad()
@@ -337,6 +356,7 @@ def train_distilled(args):
     ).to(device)
 
     proj = FeatureProjection(args.student_dim, args.teacher_dim).to(device)
+    loss_weighting = UncertaintyLoss(num_losses=3).to(device)
 
     # ── Parameter counts ──────────────────────────────────────────────────── #
     t_params = sum(p.numel() for p in teacher.parameters() if p.requires_grad)
@@ -354,7 +374,7 @@ def train_distilled(args):
     print(f"{'='*60}\n")
 
     # ── Optimiser ─────────────────────────────────────────────────────────── #
-    params_to_opt = list(student.parameters()) + list(proj.parameters())
+    params_to_opt = list(student.parameters()) + list(proj.parameters()) + list(loss_weighting.parameters())
     optimizer = torch.optim.AdamW(
         params_to_opt, lr=args.lr, weight_decay=args.weight_decay
     )
@@ -391,15 +411,24 @@ def train_distilled(args):
         else:
             print(" Warning: Projection state dict not found in checkpoint.")
 
+        if "loss_weighting" in ckpt_data:
+            loss_weighting.load_state_dict(ckpt_data["loss_weighting"])
+
         # Load optimizer state safely
         if "optimizer" in ckpt_data:
-            optimizer.load_state_dict(ckpt_data["optimizer"])
+            try:
+                optimizer.load_state_dict(ckpt_data["optimizer"])
+            except ValueError:
+                print(" Warning: Optimizer state mismatch (e.g. UncertaintyLoss added). Initialising fresh optimizer.")
         else:
             print(" Warning: Optimizer state not found in checkpoint. Initialising fresh optimizer.")
 
         # Load scheduler state safely
         if "scheduler" in ckpt_data and scheduler is not None:
-            scheduler.load_state_dict(ckpt_data["scheduler"])
+            try:
+                scheduler.load_state_dict(ckpt_data["scheduler"])
+            except ValueError:
+                pass
         else:
             print(" Warning: Scheduler state not found in checkpoint. Initialising fresh scheduler.")
 
@@ -434,7 +463,7 @@ def train_distilled(args):
         t0 = time.time()
 
         train_loss, train_mape = run_distill_epoch(
-            teacher, student, proj, train_loader, device, normalizer,
+            teacher, student, proj, loss_weighting, train_loader, device, normalizer,
             optimizer,
             alpha=args.alpha, beta=args.beta, gamma=args.gamma,
             adaptive=not args.no_adaptive_loss,
@@ -442,7 +471,7 @@ def train_distilled(args):
         )
 
         val_loss, val_mape = run_distill_epoch(
-            teacher, student, proj, val_loader, device, normalizer,
+            teacher, student, proj, loss_weighting, val_loader, device, normalizer,
             optimizer=None,
             alpha=args.alpha, beta=args.beta, gamma=args.gamma,
             adaptive=not args.no_adaptive_loss,
@@ -461,6 +490,7 @@ def train_distilled(args):
             torch.save({
                 "student": best_state,
                 "proj": proj.state_dict(),
+                "loss_weighting": loss_weighting.state_dict(),
                 "val_mape": val_mape,
                 "epoch": epoch,
                 "config": vars(args),
@@ -476,6 +506,7 @@ def train_distilled(args):
             "epoch": epoch,
             "student": student.state_dict(),
             "proj": proj.state_dict(),
+            "loss_weighting": loss_weighting.state_dict(),
             "optimizer": optimizer.state_dict(),
             "scheduler": scheduler.state_dict() if scheduler is not None else None,
             "best_val_mape": best_val_mape,
@@ -496,7 +527,7 @@ def train_distilled(args):
     # ── Final evaluation on test set ──────────────────────────────────────── #
     student.load_state_dict(best_state)
     _, test_mape = run_distill_epoch(
-        teacher, student, proj, test_loader, device, normalizer,
+        teacher, student, proj, loss_weighting, test_loader, device, normalizer,
         optimizer=None,
         alpha=1.0, beta=0.0, gamma=0.0,
         adaptive=False,
@@ -538,14 +569,14 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for splitting scenario dataset")
     parser.add_argument("--subsample", type=float, default=1.0,
-                        help="Subsample ratio of snapshots (e.g., 0.2 to use 20%% of data)")
+                        help="Subsample ratio of snapshots (e.g., 0.2 to use 20% of data)")
     parser.add_argument("--resume", action="store_true",
                         help="Resume training from the latest checkpoint if one exists")
 
     # Loss weights
-    parser.add_argument("--alpha", type=float, default=0.3,
+    parser.add_argument("--alpha", type=float, default=0.5,
                         help="Hard target loss weight")
-    parser.add_argument("--beta", type=float, default=0.5,
+    parser.add_argument("--beta", type=float, default=0.3,
                         help="Soft target loss weight")
     parser.add_argument("--gamma", type=float, default=0.2,
                         help="Feature representation loss weight")
