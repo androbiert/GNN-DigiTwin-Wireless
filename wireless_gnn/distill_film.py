@@ -38,7 +38,7 @@ from wireless_gnn.model2 import WirelessNetFermiV3
 from wireless_gnn.student_film import WirelessNetFermiStudent
 from wireless_gnn.dataset import FeatureNormalizer, build_datasets, build_scenario_datasets, collate_fn
 from wireless_gnn.scenario_registry import discover_scenarios, filter_for_target
-
+torch.set_num_threads(4)
 
 
 # --------------------------------------------------------------------------- #
@@ -83,10 +83,12 @@ def run_distill_epoch(
     beta:  float = 0.5,
     gamma: float = 0.2,
     adaptive: bool = True,
-    tcad_gamma: float = 5.0,
+    tcad_ema: dict = None,
     desc:  str   = "",
 ) -> Tuple[float, float]:
     """Single epoch of distillation training or validation."""
+    if tcad_ema is None:
+        tcad_ema = {'teacher_mae': 0.2}  # Initial guess for Laplace scale parameter 'b'
     training = optimizer is not None
     student.train(training)
     teacher.eval()
@@ -160,10 +162,17 @@ def run_distill_epoch(
                     # 1. Measure teacher's error (ground truth MAE on normalized targets)
                     with torch.no_grad():
                         loss_teacher = F.l1_loss(teacher_pred, true_norm)
-                        # 2. Compute confidence (omega)
-                        confidence = torch.exp(-tcad_gamma * loss_teacher)
                         
-                    # 3. Dynamic blending
+                        # 2. Update EMA of Teacher MAE (MLE for Laplace scale parameter b)
+                        tcad_ema['teacher_mae'] = 0.99 * tcad_ema['teacher_mae'] + 0.01 * loss_teacher.item()
+                        
+                        # 3. Dynamically compute optimal gamma* = 1 / b_MLE
+                        dynamic_gamma = 1.0 / (tcad_ema['teacher_mae'] + 1e-8)
+                        
+                        # 4. Compute confidence (omega)
+                        confidence = torch.exp(-dynamic_gamma * loss_teacher)
+                        
+                    # 5. Dynamic blending
                     # If teacher is perfect (confidence->1), learn from soft+feat
                     # If teacher is bad (confidence->0), learn from hard
                     loss = (1.0 - confidence) * (alpha * loss_hard) + confidence * (beta * loss_soft + gamma * loss_feat)
@@ -171,10 +180,12 @@ def run_distill_epoch(
                     cur_alpha = ((1.0 - confidence) * alpha).item()
                     cur_beta  = (confidence * beta).item()
                     cur_gamma = (confidence * gamma).item()
+                    cur_tcad_g = dynamic_gamma
                 else:
                     cur_alpha = alpha
                     cur_beta  = beta
                     cur_gamma = gamma
+                    cur_tcad_g = 0.0
                     loss = cur_alpha * loss_hard + cur_beta * loss_soft + cur_gamma * loss_feat
 
                 if training:
@@ -206,6 +217,7 @@ def run_distill_epoch(
                     alpha=f"{cur_alpha:.2f}",
                     beta=f"{cur_beta:.2f}",
                     gamma=f"{cur_gamma:.2f}",
+                    g_star=f"{cur_tcad_g:.1f}",
                 )
             else:
                 pbar.set_postfix(
@@ -372,6 +384,8 @@ def train_distilled(args):
     best_val_mape = float("inf")
     best_state = copy.deepcopy(student.state_dict())
     no_improve = 0
+    
+    tcad_ema_state = {'teacher_mae': 0.2}
 
     latest_ckpt = os.path.join(ckpt_dir, "latest.pt")
     best_ckpt = os.path.join(ckpt_dir, "best.pt")
@@ -396,6 +410,9 @@ def train_distilled(args):
             proj.load_state_dict(ckpt_data["proj"])
         else:
             print(" Warning: Projection state dict not found in checkpoint.")
+
+        if "tcad_ema" in ckpt_data:
+            tcad_ema_state = ckpt_data["tcad_ema"]
 
         # Load optimizer state safely
         if "optimizer" in ckpt_data:
@@ -450,7 +467,7 @@ def train_distilled(args):
             optimizer,
             alpha=args.alpha, beta=args.beta, gamma=args.gamma,
             adaptive=not args.no_adaptive_loss,
-            tcad_gamma=args.tcad_gamma,
+            tcad_ema=tcad_ema_state,
             desc=f"  train ep{epoch:03d}",
         )
 
@@ -459,7 +476,7 @@ def train_distilled(args):
             optimizer=None,
             alpha=args.alpha, beta=args.beta, gamma=args.gamma,
             adaptive=not args.no_adaptive_loss,
-            tcad_gamma=args.tcad_gamma,
+            tcad_ema=tcad_ema_state,
             desc=f"  val ep{epoch:03d}",
         )
 
@@ -478,6 +495,7 @@ def train_distilled(args):
                 "val_mape": val_mape,
                 "epoch": epoch,
                 "config": vars(args),
+                "tcad_ema": tcad_ema_state,
                 "architecture": "FiLM_Highway",
                 "normalizer": normalizer.get_state(),
             }, best_ckpt)
@@ -495,6 +513,7 @@ def train_distilled(args):
             "best_val_mape": best_val_mape,
             "no_improve": no_improve,
             "config": vars(args),
+            "tcad_ema": tcad_ema_state,
             "normalizer": normalizer.get_state(),
         }, latest_ckpt)
 
@@ -514,7 +533,7 @@ def train_distilled(args):
         optimizer=None,
         alpha=1.0, beta=0.0, gamma=0.0,
         adaptive=False,
-        tcad_gamma=args.tcad_gamma,
+        tcad_ema=tcad_ema_state,
         desc="  test evaluation",
     )
 
@@ -564,8 +583,6 @@ if __name__ == "__main__":
                         help="Soft target loss weight")
     parser.add_argument("--gamma", type=float, default=0.2,
                         help="Feature representation loss weight")
-    parser.add_argument("--tcad_gamma", type=float, default=5.0,
-                        help="Temperature for Teacher-Confidence Aware Distillation (TCAD)")
     parser.add_argument("--no_adaptive_loss", action="store_true",
                         help="Disable adaptive loss weighting (use fixed alpha/beta/gamma weights instead)")
 
