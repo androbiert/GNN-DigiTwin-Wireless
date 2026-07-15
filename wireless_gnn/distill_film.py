@@ -393,6 +393,7 @@ def train_distilled(args):
     best_val_metric = float("inf")
     best_val_mae = float("inf")
     best_state = copy.deepcopy(student.state_dict())
+    best_mae_state = copy.deepcopy(student.state_dict())
     no_improve = 0
     
     tcad_ema_state = {'teacher_mae': 0.2}
@@ -467,6 +468,14 @@ def train_distilled(args):
         else:
             best_state = copy.deepcopy(student.state_dict())
 
+    best_mae_ckpt = os.path.join(ckpt_dir, "best_mae.pt")
+    if os.path.isfile(best_mae_ckpt):
+        best_mae_data = torch.load(best_mae_ckpt, map_location="cpu", weights_only=False)
+        if "student" in best_mae_data:
+            best_mae_state = best_mae_data["student"]
+        else:
+            best_mae_state = copy.deepcopy(student.state_dict())
+
     print(f"Distillation training loop starting...")
     print(f"Loss weights: α(hard)={args.alpha}, β(soft)={args.beta}, "
           f"γ(feat)={args.gamma}")
@@ -502,11 +511,11 @@ def train_distilled(args):
         elapsed = time.time() - t0
 
         val_metric = val_mape if args.best_metric == "mape" else val_loss
-        is_best = val_metric < best_val_metric
+        is_best_metric = val_metric < best_val_metric
+        is_best_mae = val_mae < best_val_mae
 
-        if is_best:
+        if is_best_metric:
             best_val_metric = val_metric
-            best_val_mae = val_mae
             best_state = copy.deepcopy(student.state_dict())
             no_improve = 0
             torch.save({
@@ -526,6 +535,24 @@ def train_distilled(args):
         else:
             no_improve += 1
 
+        if is_best_mae:
+            best_val_mae = val_mae
+            best_mae_state = copy.deepcopy(student.state_dict())
+            torch.save({
+                "student": best_mae_state,
+                "proj": proj.state_dict(),
+                "val_mape": val_mape,
+                "val_loss": val_loss,
+                "val_mae": val_mae,
+                "best_val_metric": best_val_metric,
+                "best_val_mae": best_val_mae,
+                "epoch": epoch,
+                "config": vars(args),
+                "tcad_ema": tcad_ema_state,
+                "architecture": "FiLM_Highway",
+                "normalizer": normalizer.get_state(),
+            }, best_mae_ckpt)
+
         # Save latest checkpoint for resuming
         latest_ckpt = os.path.join(ckpt_dir, "latest.pt")
         torch.save({
@@ -542,9 +569,12 @@ def train_distilled(args):
             "normalizer": normalizer.get_state(),
         }, latest_ckpt)
 
-        flag = "★" if is_best else ""
+        flags = []
+        if is_best_metric: flags.append("★M")
+        if is_best_mae: flags.append("★E")
+        flag_str = ",".join(flags) if flags else ""
         print(f"{epoch:>6}  {train_loss:>12.4f}  {train_mape:>12.4%}  "
-              f"{val_mape:>12.4%}  {val_mae:>10.4f}  {flag:>6}  {cur_lr:>10.2e}")
+              f"{val_mape:>12.4%}  {val_mae:>10.4f}  {flag_str:>6}  {cur_lr:>10.2e}")
 
         if no_improve >= args.patience:
             print(f"\nEarly stop at epoch {epoch} "
@@ -552,25 +582,43 @@ def train_distilled(args):
             break
 
     # ── Final evaluation on test set ──────────────────────────────────────── #
+    print("\nEvaluating Best Metric Model (best.pt):")
     student.load_state_dict(best_state)
-    _, test_mape, test_mae = run_distill_epoch(
+    _, test_mape_metric, test_mae_metric = run_distill_epoch(
         teacher, student, proj, test_loader, device, normalizer,
         optimizer=None,
         alpha=1.0, beta=0.0, gamma=0.0,
         adaptive=False,
         tcad_ema=tcad_ema_state,
-        desc="  test evaluation",
+        desc="  test evaluation (metric)",
+        loss_type=args.loss_fn,
+    )
+
+    print("\nEvaluating Best MAE Model (best_mae.pt):")
+    student.load_state_dict(best_mae_state)
+    _, test_mape_mae, test_mae_mae = run_distill_epoch(
+        teacher, student, proj, test_loader, device, normalizer,
+        optimizer=None,
+        alpha=1.0, beta=0.0, gamma=0.0,
+        adaptive=False,
+        tcad_ema=tcad_ema_state,
+        desc="  test evaluation (mae)",
         loss_type=args.loss_fn,
     )
 
     print(f"\n{'='*60}")
     print(f"  DISTILLATION RESULTS — FiLM & Highway Student")
     print(f"  Target         : {args.target.upper()}")
-    print(f"  Final Test MAPE: {test_mape:.4%}")
-    print(f"  Final Test MAE : {test_mae:.4f}")
-    print(f"  Best Val Metric: {best_val_metric:.4f} (tracked by {args.best_metric})")
-    print(f"  Best Val MAE   : {best_val_mae:.4f}")
-    print(f"  Saved to       : {best_ckpt}")
+    print(f"  --- Best Metric Model ({args.best_metric}) ---")
+    print(f"  Test MAPE: {test_mape_metric:.4%}")
+    print(f"  Test MAE : {test_mae_metric:.4f}")
+    print(f"  Val Metric: {best_val_metric:.4f}")
+    print(f"  Saved to : {best_ckpt}")
+    print(f"  --- Best MAE Model ---")
+    print(f"  Test MAPE: {test_mape_mae:.4%}")
+    print(f"  Test MAE : {test_mae_mae:.4f}")
+    print(f"  Val MAE  : {best_val_mae:.4f}")
+    print(f"  Saved to : {best_mae_ckpt}")
     print(f"{'='*60}\n")
 
 
