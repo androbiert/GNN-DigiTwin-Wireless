@@ -392,10 +392,14 @@ def train_distilled(args):
 
     resume_path = None
     if args.resume:
-        if os.path.isfile(latest_ckpt):
+        if args.resume_from == "latest" and os.path.isfile(latest_ckpt):
             resume_path = latest_ckpt
-        elif os.path.isfile(best_ckpt):
+        elif args.resume_from == "best" and os.path.isfile(best_ckpt):
             resume_path = best_ckpt
+        elif os.path.isfile(latest_ckpt): # Fallback
+            resume_path = latest_ckpt
+        else:
+            print(f" Warning: Requested checkpoint '{args.resume_from}.pt' not found. Training from scratch.")
 
     if resume_path:
         print(f"★ Resuming training from checkpoint: {resume_path}")
@@ -574,8 +578,9 @@ if __name__ == "__main__":
     parser.add_argument("--subsample", type=float, default=1.0,
                         help="Subsample ratio of snapshots (e.g., 0.2 to use 20% of data)")
     parser.add_argument("--resume", action="store_true",
-                        help="Resume training from the latest checkpoint if one exists")
-
+                        help="Resume training from a checkpoint if one exists")
+    parser.add_argument("--resume_from", type=str, choices=["latest", "best"], default="latest",
+                        help="Which checkpoint to resume from (latest or best). Default: latest")
     # Loss weights
     parser.add_argument("--alpha", type=float, default=0.5,
                         help="Hard target loss weight")
