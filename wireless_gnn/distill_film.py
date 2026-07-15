@@ -86,7 +86,7 @@ def run_distill_epoch(
     tcad_ema: dict = None,
     desc:  str   = "",
     loss_type: str = "mae",
-) -> Tuple[float, float]:
+) -> Tuple[float, float, float]:
     """Single epoch of distillation training or validation."""
     if tcad_ema is None:
         tcad_ema = {'teacher_mae': 0.2}  # Initial guess for Laplace scale parameter 'b'
@@ -97,6 +97,7 @@ def run_distill_epoch(
 
     total_loss = 0.0
     total_mape = 0.0
+    total_mae = 0.0
     total_hard = 0.0
     total_soft = 0.0
     total_feat = 0.0
@@ -147,9 +148,10 @@ def run_distill_epoch(
                 # ── Loss 1: Hard target ── #
                 loss_hard = criterion(student_pred, true_norm)
                 
-                # Compute MAPE on physical values for validation metric tracking
+                # Compute MAPE and MAE on physical values for validation metric tracking
                 student_pred_phys = student_pred * std + mean
                 loss_hard_mape = mape_loss(student_pred_phys, true_phys)
+                loss_hard_mae = F.l1_loss(student_pred_phys, true_phys)
 
                 # ── Loss 2: Soft target ─────── #
                 loss_soft = criterion(student_pred, teacher_pred.detach())
@@ -209,6 +211,7 @@ def run_distill_epoch(
 
                 total_loss += loss.item()
                 total_mape += loss_hard_mape.item()
+                total_mae += loss_hard_mae.item()
                 total_hard += loss_hard.item()
                 total_soft += loss_soft.item()
                 total_feat += loss_feat.item()
@@ -233,7 +236,7 @@ def run_distill_epoch(
                     L_feat=f"{total_feat/max(n,1):.4f}",
                 )
 
-    return total_loss / max(n, 1), total_mape / max(n, 1)
+    return total_loss / max(n, 1), total_mape / max(n, 1), total_mae / max(n, 1)
 
 
 # --------------------------------------------------------------------------- #
@@ -388,6 +391,7 @@ def train_distilled(args):
 
     start_epoch = 1
     best_val_metric = float("inf")
+    best_val_mae = float("inf")
     best_state = copy.deepcopy(student.state_dict())
     no_improve = 0
     
@@ -444,6 +448,7 @@ def train_distilled(args):
 
         start_epoch = ckpt_data.get("epoch", 0) + 1
         best_val_metric = ckpt_data.get("best_val_metric", ckpt_data.get("best_val_mape", ckpt_data.get("val_mape", float("inf"))))
+        best_val_mae = ckpt_data.get("best_val_mae", ckpt_data.get("val_mae", float("inf")))
         no_improve = ckpt_data.get("no_improve", 0)
 
         if no_improve >= args.patience:
@@ -466,13 +471,13 @@ def train_distilled(args):
     print(f"Loss weights: α(hard)={args.alpha}, β(soft)={args.beta}, "
           f"γ(feat)={args.gamma}")
     print(f"{'Epoch':>6}  {'Train Loss':>12}  {'Train MAPE':>12}  "
-          f"{'Val MAPE':>12}  {'Best?':>6}  {'LR':>10}")
-    print("-" * 72)
+          f"{'Val MAPE':>12}  {'Val MAE':>10}  {'Best?':>6}  {'LR':>10}")
+    print("-" * 84)
 
     for epoch in range(start_epoch, args.epochs + 1):
         t0 = time.time()
 
-        train_loss, train_mape = run_distill_epoch(
+        train_loss, train_mape, train_mae = run_distill_epoch(
             teacher, student, proj, train_loader, device, normalizer,
             optimizer,
             alpha=args.alpha, beta=args.beta, gamma=args.gamma,
@@ -482,7 +487,7 @@ def train_distilled(args):
             loss_type=args.loss_fn,
         )
 
-        val_loss, val_mape = run_distill_epoch(
+        val_loss, val_mape, val_mae = run_distill_epoch(
             teacher, student, proj, val_loader, device, normalizer,
             optimizer=None,
             alpha=args.alpha, beta=args.beta, gamma=args.gamma,
@@ -501,6 +506,7 @@ def train_distilled(args):
 
         if is_best:
             best_val_metric = val_metric
+            best_val_mae = val_mae
             best_state = copy.deepcopy(student.state_dict())
             no_improve = 0
             torch.save({
@@ -508,7 +514,9 @@ def train_distilled(args):
                 "proj": proj.state_dict(),
                 "val_mape": val_mape,
                 "val_loss": val_loss,
+                "val_mae": val_mae,
                 "best_val_metric": best_val_metric,
+                "best_val_mae": best_val_mae,
                 "epoch": epoch,
                 "config": vars(args),
                 "tcad_ema": tcad_ema_state,
@@ -527,6 +535,7 @@ def train_distilled(args):
             "optimizer": optimizer.state_dict(),
             "scheduler": scheduler.state_dict() if scheduler is not None else None,
             "best_val_metric": best_val_metric,
+            "best_val_mae": best_val_mae,
             "no_improve": no_improve,
             "config": vars(args),
             "tcad_ema": tcad_ema_state,
@@ -535,7 +544,7 @@ def train_distilled(args):
 
         flag = "★" if is_best else ""
         print(f"{epoch:>6}  {train_loss:>12.4f}  {train_mape:>12.4%}  "
-              f"{val_mape:>12.4%}  {flag:>6}  {cur_lr:>10.2e}")
+              f"{val_mape:>12.4%}  {val_mae:>10.4f}  {flag:>6}  {cur_lr:>10.2e}")
 
         if no_improve >= args.patience:
             print(f"\nEarly stop at epoch {epoch} "
@@ -544,7 +553,7 @@ def train_distilled(args):
 
     # ── Final evaluation on test set ──────────────────────────────────────── #
     student.load_state_dict(best_state)
-    _, test_mape = run_distill_epoch(
+    _, test_mape, test_mae = run_distill_epoch(
         teacher, student, proj, test_loader, device, normalizer,
         optimizer=None,
         alpha=1.0, beta=0.0, gamma=0.0,
@@ -558,7 +567,9 @@ def train_distilled(args):
     print(f"  DISTILLATION RESULTS — FiLM & Highway Student")
     print(f"  Target         : {args.target.upper()}")
     print(f"  Final Test MAPE: {test_mape:.4%}")
+    print(f"  Final Test MAE : {test_mae:.4f}")
     print(f"  Best Val Metric: {best_val_metric:.4f} (tracked by {args.best_metric})")
+    print(f"  Best Val MAE   : {best_val_mae:.4f}")
     print(f"  Saved to       : {best_ckpt}")
     print(f"{'='*60}\n")
 
